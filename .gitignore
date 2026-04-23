@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+*.png
+*.svg
+_*.js
+.DS_Store
