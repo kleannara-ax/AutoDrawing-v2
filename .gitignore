@@ -6,3 +6,8 @@ dist/
 *.svg
 _*.js
 .DS_Store
+
+# Auth data (generated at runtime)
+data/users.json
+data/teams.json
+data/*/

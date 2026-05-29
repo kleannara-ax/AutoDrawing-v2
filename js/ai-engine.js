@@ -291,6 +291,10 @@ const AIEngine = (() => {
       const pos = seg.position || `seg_${i}`;
       const diam = diamMap[pos];
 
+      // ★ v111: 구간별 모따기 데이터 매핑
+      const secChamfer = (signals.sectionChamfers || []).find(sc => sc.section === `S${i + 1}`);
+      // ★ v114: 구간별 프로파일 (CYLINDER/TAPER) 매핑
+      const secProfile = (signals.sectionProfiles || []).find(sp => sp.section === `S${i + 1}`);
       candidates.geometry.sections.push({
         id: `S${i + 1}`,
         length: seg.value,
@@ -298,6 +302,10 @@ const AIEngine = (() => {
         diameter: diam ? diam.value : null,
         diameterConf: diam ? diam.confidence : CONF.UNCERTAIN,
         note: diam ? null : '직경 미감지 — 원본 확인 필요',
+        chamferLeft: secChamfer ? secChamfer.left : 0,    // v111: 좌측 모따기 (mm)
+        chamferRight: secChamfer ? secChamfer.right : 0,  // v111: 우측 모따기 (mm)
+        profile: secProfile ? secProfile.profile : 'CYLINDER',   // v114: 프로파일 타입
+        diameterEnd: secProfile ? secProfile.diameterEnd : null, // v114: 테이퍼 끝직경 (우측)
       });
     });
 
@@ -482,7 +490,7 @@ const AIEngine = (() => {
     // v8: 중공축 데이터 전달
     candidates._hollowShaftData = signals.hollowShaftData || null;
     candidates._shaftType = signals.shaftType || 'solid';
-    // v26: 체인기어 데이터 전달
+    // v26: 체인스프라켓 데이터 전달
     candidates._chainGears = signals.chainGears || [];
     return candidates;
   }
@@ -553,7 +561,7 @@ const AIEngine = (() => {
       // v8: 중공축 데이터
       hollowShaftData: candidates._hollowShaftData || null,
       shaftType: candidates._shaftType || 'solid',
-      // v26: 체인기어 데이터
+      // v26: 체인스프라켓 데이터
       chainGears: [...(candidates._chainGears || [])],
       _reviewRequired: true, // v5: 항상 review (형상 초안 상태)
     };
@@ -567,6 +575,10 @@ const AIEngine = (() => {
         diameter: sec.diameter,
         diameterConf: sec.diameterConf,
         note: sec.note,
+        chamferLeft: sec.chamferLeft || 0,    // v111: 모따기
+        chamferRight: sec.chamferRight || 0,  // v111: 모따기
+        profile: sec.profile || 'CYLINDER',   // v114: 프로파일
+        diameterEnd: sec.diameterEnd || null, // v114: 테이퍼 끝직경
       });
     });
 
@@ -692,11 +704,14 @@ const AIEngine = (() => {
       const curSec = secs[vi];
       const nextSec = secs[vi + 1];
       if (curSec.diameter == null || nextSec.diameter == null) continue;
-      if (curSec.diameter !== nextSec.diameter) {
+      // v114: 테이퍼인 경우 경계 직경은 우측/좌측 각각
+      const curRightDiam = (curSec.profile === 'TAPER' && curSec.diameterEnd) ? curSec.diameterEnd : curSec.diameter;
+      const nextLeftDiam = nextSec.diameter; // 좌측 직경 (= diameter 필드)
+      if (curRightDiam !== nextLeftDiam) {
         stepBoundaries.push({
           boundary: `${curSec.id}↔${nextSec.id}`,
-          diam1: curSec.diameter,
-          diam2: nextSec.diameter,
+          diam1: curRightDiam,
+          diam2: nextLeftDiam,
         });
       }
     }
@@ -947,7 +962,21 @@ const AIEngine = (() => {
     // ★ 동적 스케일 — 도면 콘텐츠를 가용 영역에 맞춤
     const rawTotalLength = geo.totalLength ||
       geo.sections.reduce((sum, s) => sum + (s.length || 0), 0) || 200;
-    const maxDiam = Math.max(...geo.sections.map(s => s.diameter || 20));
+    // v114: 테이퍼 구간의 큰 쪽 직경도 고려
+    const maxDiam = Math.max(...geo.sections.map(s => {
+      const d1 = s.diameter || 20;
+      const d2 = (s.profile === 'TAPER' && s.diameterEnd) ? s.diameterEnd : d1;
+      return Math.max(d1, d2);
+    }));
+
+    // ★ v102: 물결 생략선 적용 후 시각적 총 길이 (센터링·스케일 기준)
+    //   > 1000mm 구간은 10%로 축소, 나머지는 그대로
+    const BREAK_THRESHOLD_PRE = 1000;
+    const BREAK_RATIO_PRE = 0.10;
+    const visualTotalLength = geo.sections.reduce((sum, s) => {
+      const len = s.length || 0;
+      return sum + (len > BREAK_THRESHOLD_PRE ? len * BREAK_RATIO_PRE : len);
+    }, 0) || 200;
 
     // 도면 콘텐츠 필요 크기 (치수선/텍스트 여백 포함, px 기준)
     //   수평: 중심선 좌우 마진(30) + 축 길이 + 우측 지시선 여백(80)
@@ -957,15 +986,15 @@ const AIEngine = (() => {
     const marginTop = 90;  // 상단 여유 (보조투상도 + 치수선)
     const marginBot = 60;  // 하단 여유 (지시선 + 텍스트)
 
-    // PX/mm — 가용 영역에 맞추되 최대 2
+    // PX/mm — 가용 영역에 맞추되 최대 2 (원본 길이 기준 — 스케일 불변)
     const contentNeedW = rawTotalLength + (marginCL + marginR) / 2 + 40;
     const contentNeedH = maxDiam + (marginTop + marginBot) / 2 + 40;
     const PX = Math.min(2, drawAreaW / contentNeedW, drawAreaH / contentNeedH);
 
-    // 실제 콘텐츠 크기 (px)
-    const shaftW = rawTotalLength * PX;          // 축 도면 폭
-    const shaftH = maxDiam * PX;                 // 축 도면 높이 (직경)
-    const totalContentW = marginCL + shaftW + marginR;
+    // 실제 콘텐츠 크기 (px) — 센터링은 시각적 길이 기준, 높이는 원본
+    const shaftVisualW = visualTotalLength * PX;  // 축 시각 폭 (생략선 반영, 센터링용)
+    const shaftH = maxDiam * PX;                  // 축 도면 높이 (직경)
+    const totalContentW = marginCL + shaftVisualW + marginR;
     const totalContentH = marginTop + shaftH + marginBot;
 
     // ★ 윤곽선 내부 중앙 배치
@@ -998,7 +1027,7 @@ const AIEngine = (() => {
         [innerX1, innerY2, innerX1, innerY1], // 좌
       ];
       borderLines.forEach(([x1, y1, x2, y2]) => {
-        const bl = DrawingModel.createOutline(x1, y1, x2, y2, 2);
+        const bl = DrawingModel.createOutline(x1, y1, x2, y2, 1);
         bl.confidence = CONF.CONFIRMED;
         bl.locked = true;
         doc.elements.push(bl);
@@ -1097,29 +1126,78 @@ const AIEngine = (() => {
     }
 
     // ──── 1. 구간 좌표 계산 ────
+    // ★ between 모드 스프라켓이 있으면, 해당 구간 사이에 틈(gap)을 삽입하여
+    //   S2 ─ [스프라켓] ─ S3 형태로 시각적 분리를 보장한다.
     const sections = [];
     let curX = ox;
 
     const resolvedSections = geo.sections.map((s, i) => {
-      if (s.diameter != null) return { ...s, _renderDiam: s.diameter };
+      if (s.diameter != null) {
+        // v114: 테이퍼인 경우 _renderDiam은 큰 쪽 기준 (maxR 계산용)
+        const d1 = s.diameter;
+        const d2 = (s.profile === 'TAPER' && s.diameterEnd) ? s.diameterEnd : d1;
+        return { ...s, _renderDiam: Math.max(d1, d2), _renderDiamStart: d1, _renderDiamEnd: d2 };
+      }
       // 직경 미감지: 인접 참고 (렌더링 크기만, 숫자 "생성" 아님)
       const prev = i > 0 ? geo.sections[i - 1] : null;
       const next = i < geo.sections.length - 1 ? geo.sections[i + 1] : null;
       const ref = prev?.diameter || next?.diameter || 20;
-      return { ...s, _renderDiam: ref * 0.6 };
+      const fallback = ref * 0.6;
+      return { ...s, _renderDiam: fallback, _renderDiamStart: fallback, _renderDiamEnd: fallback };
     });
 
     const maxR = Math.max(...resolvedSections.map(s => (s._renderDiam || 20) / 2));
 
+    // ★ between 모드 스프라켓용 gap 사전 계산
+    // sectionLeftId → 해당 구간 뒤에 삽입할 gap 폭 (px)
+    const betweenGaps = {}; // { sectionLeftId: gapWidthPx }
+    const chainGears_pre = spec.chainGears || [];
+    chainGears_pre.forEach(cg => {
+      if (cg.placement !== 'between') return;
+      const gearWidthPx_pre = (cg.gearWidth || 8) * PX;
+      // per-boss 두께 합산
+      let totalBossThick_pre = 0;
+      if (cg.boss) {
+        const bCount = cg.boss.count || 1;
+        for (let b = 0; b < bCount; b++) {
+          const bData = (cg.boss.bosses && cg.boss.bosses[b]) || cg.boss;
+          const t = (bData && bData.thickness > 0) ? bData.thickness * PX : 0;
+          totalBossThick_pre += t;
+        }
+      }
+      const assemblyWidth = gearWidthPx_pre + totalBossThick_pre;
+      const leftId = cg.sectionLeft;
+      // 같은 경계에 여러 스프라켓이 있으면 최대값 사용
+      betweenGaps[leftId] = Math.max(betweenGaps[leftId] || 0, assemblyWidth);
+    });
+
+    // ★ 물결 생략선 (break line) 기준: 실제 길이 > 1000mm인 구간은
+    //   시각적 폭을 10%로 축소하고 중앙에 물결 기호를 그린다.
+    //   치수값은 원래 길이(mm)를 표시한다.
+    const BREAK_THRESHOLD_MM = 1000; // 생략선 적용 기준 (mm)
+    const BREAK_RATIO = 0.10;        // 시각적 축소 비율 (10%)
+
     resolvedSections.forEach(s => {
-      const w = s.length * PX;
+      const isBreak = s.length > BREAK_THRESHOLD_MM;
+      const w = isBreak ? (s.length * BREAK_RATIO * PX) : (s.length * PX);
       const r = ((s._renderDiam || 20) / 2) * PX;
+      // ★ v114: 테이퍼 구간용 좌/우 반지름
+      const rLeft = ((s._renderDiamStart || s._renderDiam || 20) / 2) * PX;
+      const rRight = ((s._renderDiamEnd || s._renderDiam || 20) / 2) * PX;
+      const isTaper = s.profile === 'TAPER' && Math.abs(rLeft - rRight) > 0.01;
       sections.push({
         ...s,
         x: curX, w, r,
+        rLeft, rRight, isTaper,          // v114: 테이퍼 지원
         px_diameter: (s._renderDiam || 20) * PX,
+        _breakLine: isBreak,            // 물결 생략선 여부
+        _breakScale: isBreak ? BREAK_RATIO : 1, // px↔mm 변환 스케일
       });
       curX += w;
+      // ★ 이 구간 뒤에 between 스프라켓 gap이 있으면 삽입
+      if (betweenGaps[s.id]) {
+        curX += betweenGaps[s.id];
+      }
     });
 
     const rightEnd = curX;
@@ -1152,33 +1230,237 @@ const AIEngine = (() => {
     // 경계(x=180, x=402)에서는 큰 section과 작은 section의 면이 겹치므로,
     // 큰 section의 면이 작은 section의 면을 포함한다.
     //
+    // ★ v112: 수직선(좌면/우면) 중복 제거 — 경계를 한 번만 그리기
+    //
+    //   기존 문제: 각 section이 독립적으로 4면을 그려서 공유 경계에서
+    //   인접 section의 수직선이 모따기 영역을 덮어씀.
+    //
+    //   해결: 공유 경계(S[i].x2 == S[i+1].x1)에서는 두 section의 모따기를
+    //   모두 반영한 수직선을 한 번만 그린다.
+    //   전체 Y 범위(union)에서 모따기 제외 구간(exclusion zones)을 빼서
+    //   최종 수직선 segment를 결정.
+    //
+    //   예) S1(Ø30, chamferRight=3) → S2(Ø50, no chamfer):
+    //     전체 범위: [oy-r2, oy+r2]
+    //     제외 구간: [oy-r1, oy-r1+c], [oy+r1-c, oy+r1]
+    //     결과: 3 segments — 상단 단차, 중간(축소), 하단 단차
+    //
+    // ★ v113: 모따기 렌더링 — 직경 비례 + 최소 C1 보장
+    //
+    //   핵심: 모따기를 해당 구간 반지름에 대한 "비율"로 렌더링.
+    //     ratio = max(C_mm, 1) / (diameter_mm / 2)
+    //     chamfer_px = ratio * rPx
+    //
+    //   예) C5 on Ø55 → ratio=5/27.5=18.2% → 큰 구간이면 큰 모따기
+    //   예) C1 on Ø20 → ratio=1/10=10%     → 작은 구간이면 작은 모따기
+    //
+    //   최소 시각: 비율 결과가 2px 미만이면 2px (수비레장치)
+    //   최대 제한: 반지름의 40% 초과 불가 (비율 보호)
+    //   치수 라벨(C0.3 등)은 원래 mm값 그대로 표시.
+    //
+    const MIN_C_MM = 1;           // 최소 모따기 mm값 (C1)
+    const MIN_VIS_PX = 2;         // 최소 시각 크기 (px)
+    const MAX_RATIO = 0.40;       // 반지름 대비 최대 비율 (40%)
+    function chamferPx(mmVal, rPx) {
+      if (mmVal <= 0) return 0;
+      const effectiveMm = Math.max(mmVal, MIN_C_MM);
+      const rMm = PX > 0 ? (rPx / PX) : 1;
+      // mm 공간에서 비율 계산 → px 공간에 적용
+      const ratio = rMm > 0 ? (effectiveMm / rMm) : 0.1;
+      const capped = Math.min(ratio, MAX_RATIO);  // 최대 비율 제한
+      const result = capped * rPx;
+      return Math.max(result, MIN_VIS_PX);         // 최소 px 보장
+    }
+
+    const verticalDrawn = {};
+
+    function drawVerticalSegments(x, secsAtBoundary, conf) {
+      // 1) 전체 Y 범위 (모든 section의 union)
+      let minY = Infinity, maxY = -Infinity;
+      secsAtBoundary.forEach(function(info) {
+        minY = Math.min(minY, oy - info.r);
+        maxY = Math.max(maxY, oy + info.r);
+      });
+
+      // 2) 제외 구간 수집 — 모따기가 있는 꼭짓점 영역
+      var exclusions = [];
+      secsAtBoundary.forEach(function(info) {
+        if (info.chamfer > 0) {
+          // 상단 꼭짓점: [oy-r, oy-r+c]
+          exclusions.push({ top: oy - info.r, bot: oy - info.r + info.chamfer });
+          // 하단 꼭짓점: [oy+r-c, oy+r]
+          exclusions.push({ top: oy + info.r - info.chamfer, bot: oy + info.r });
+        }
+      });
+
+      if (exclusions.length === 0) {
+        // 모따기 없음 — 단일 수직선
+        var full = DrawingModel.createOutline(x, minY, x, maxY, 1);
+        full.confidence = conf;
+        doc.elements.push(full);
+        return;
+      }
+
+      // 3) 제외 구간 정렬 → 수직선 segment 생성
+      exclusions.sort(function(a, b) { return a.top - b.top; });
+      var cursor = minY;
+      exclusions.forEach(function(ex) {
+        if (ex.top > cursor + 0.01) {
+          var seg = DrawingModel.createOutline(x, cursor, x, ex.top, 1);
+          seg.confidence = conf;
+          doc.elements.push(seg);
+        }
+        if (ex.bot > cursor) cursor = ex.bot;
+      });
+      if (cursor + 0.01 < maxY) {
+        var seg = DrawingModel.createOutline(x, cursor, x, maxY, 1);
+        seg.confidence = conf;
+        doc.elements.push(seg);
+      }
+    }
+
     sections.forEach((sec, i) => {
       const x1 = sec.x;
       const x2 = sec.x + sec.w;
       const r = sec.r;
+      // ★ v114: 테이퍼 구간용 좌/우 반지름
+      const rL = sec.rLeft || r;   // 좌측 반지름 (px)
+      const rR = sec.rRight || r;  // 우측 반지름 (px)
       const conf = (sec.diameter != null) ? (sec.diameterConf || CONF.CONFIRMED) : CONF.ESTIMATED;
 
-      // 상단선
-      const topLine = DrawingModel.createOutline(x1, oy - r, x2, oy - r, 2);
-      topLine.confidence = conf;
-      doc.elements.push(topLine);
+      // ★ v112: 모따기(chamfer) — mm→px 변환 + 최소 시각 크기 보장
+      const cL = chamferPx(sec.chamferLeft || 0, rL);
+      const cR = chamferPx(sec.chamferRight || 0, rR);
 
-      // 하단선
-      const botLine = DrawingModel.createOutline(x1, oy + r, x2, oy + r, 2);
-      botLine.confidence = conf;
-      doc.elements.push(botLine);
+      // 인접 구간 참조
+      const prevSec = i > 0 ? sections[i - 1] : null;
+      const nextSec = i < sections.length - 1 ? sections[i + 1] : null;
 
-      // 좌측면 — 전체 높이 (oy-r ~ oy+r)
-      const lf = DrawingModel.createOutline(x1, oy - r, x1, oy + r, 2);
-      lf.confidence = conf;
-      doc.elements.push(lf);
+      // ── 상/하단 외형선 ──
+      // ★ v114: 테이퍼 구간은 경사선, 원통 구간은 수평선
+      if (sec._breakLine) {
+        // 물결 생략선 (테이퍼에서는 드물지만 안전 처리)
+        const brkGapW = 6;
+        const brkCx = (x1 + x2) / 2;
+        const brkL = brkCx - brkGapW / 2;
+        const brkR = brkCx + brkGapW / 2;
+        // 생략선에서는 수평으로 처리
+        const topL = DrawingModel.createOutline(x1 + cL, oy - rL, brkL, oy - rL, 1);
+        topL.confidence = conf; doc.elements.push(topL);
+        const topR = DrawingModel.createOutline(brkR, oy - rR, x2 - cR, oy - rR, 1);
+        topR.confidence = conf; doc.elements.push(topR);
+        const botL = DrawingModel.createOutline(x1 + cL, oy + rL, brkL, oy + rL, 1);
+        botL.confidence = conf; doc.elements.push(botL);
+        const botR = DrawingModel.createOutline(brkR, oy + rR, x2 - cR, oy + rR, 1);
+        botR.confidence = conf; doc.elements.push(botR);
+        const brk = DrawingModel.createBreakLine(brkCx, oy - Math.max(rL, rR), oy + Math.max(rL, rR), brkGapW);
+        doc.elements.push(brk);
+      } else if (sec.isTaper) {
+        // ★ v114: 테이퍼 구간 — 경사 외형선
+        //   좌측 (x1, rL) → 우측 (x2, rR)
+        //   모따기가 있으면 모따기 끝점에서 시작/끝
+        const topLine = DrawingModel.createOutline(x1 + cL, oy - rL, x2 - cR, oy - rR, 1);
+        topLine.confidence = conf;
+        doc.elements.push(topLine);
+        const botLine = DrawingModel.createOutline(x1 + cL, oy + rL, x2 - cR, oy + rR, 1);
+        botLine.confidence = conf;
+        doc.elements.push(botLine);
+      } else {
+        // 원통 구간 — 수평 외형선
+        const topLine = DrawingModel.createOutline(x1 + cL, oy - r, x2 - cR, oy - r, 1);
+        topLine.confidence = conf;
+        doc.elements.push(topLine);
+        const botLine = DrawingModel.createOutline(x1 + cL, oy + r, x2 - cR, oy + r, 1);
+        botLine.confidence = conf;
+        doc.elements.push(botLine);
+      }
 
-      // 우측면 — 전체 높이 (oy-r ~ oy+r)
-      const rf = DrawingModel.createOutline(x2, oy - r, x2, oy + r, 2);
-      rf.confidence = conf;
-      doc.elements.push(rf);
+      // ── 좌측 수직선 (x1) ──
+      // 공유 경계: prevSec가 있고 prevSec.x2 ≈ x1 이면, prevSec 루프에서 이미 처리됨
+      const x1Key = Math.round(x1 * 100);
+      if (!verticalDrawn[x1Key]) {
+        verticalDrawn[x1Key] = true;
+        // 이 경계에 접하는 section 정보 수집 (v114: 테이퍼는 해당 면의 반지름)
+        const secsAtX1 = [];
+        secsAtX1.push({ r: rL, chamfer: cL });
+        if (prevSec && Math.abs((prevSec.x + prevSec.w) - x1) < 0.01) {
+          const prevRR = prevSec.rRight || prevSec.r;  // 이전 구간의 우측 반지름
+          const prevCR = chamferPx(prevSec.chamferRight || 0, prevRR);
+          secsAtX1.push({ r: prevRR, chamfer: prevCR });
+        }
+        drawVerticalSegments(x1, secsAtX1, conf);
+      }
+
+      // ── 우측 수직선 (x2) ──
+      const x2Key = Math.round(x2 * 100);
+      if (!verticalDrawn[x2Key]) {
+        verticalDrawn[x2Key] = true;
+        const secsAtX2 = [];
+        secsAtX2.push({ r: rR, chamfer: cR });
+        if (nextSec && Math.abs(nextSec.x - x2) < 0.01) {
+          const nextRL = nextSec.rLeft || nextSec.r;  // 다음 구간의 좌측 반지름
+          const nextCL = chamferPx(nextSec.chamferLeft || 0, nextRL);
+          secsAtX2.push({ r: nextRL, chamfer: nextCL });
+        }
+        drawVerticalSegments(x2, secsAtX2, conf);
+      }
+
+      // ── 모따기 대각선 — 45° 선 ──
+      if (cL > 0) {
+        const chamLT = DrawingModel.createOutline(x1 + cL, oy - rL, x1, oy - rL + cL, 1);
+        chamLT.confidence = conf; doc.elements.push(chamLT);
+        const chamLB = DrawingModel.createOutline(x1 + cL, oy + rL, x1, oy + rL - cL, 1);
+        chamLB.confidence = conf; doc.elements.push(chamLB);
+      }
+      if (cR > 0) {
+        const chamRT = DrawingModel.createOutline(x2 - cR, oy - rR, x2, oy - rR + cR, 1);
+        chamRT.confidence = conf; doc.elements.push(chamRT);
+        const chamRB = DrawingModel.createOutline(x2 - cR, oy + rR, x2, oy + rR - cR, 1);
+        chamRB.confidence = conf; doc.elements.push(chamRB);
+      }
     });
 
+    // ──── 3.3a. 모따기 치수 주석 (C값 텍스트 + 지시선) ────
+    // ★ v111: 모따기가 있는 구간에 "C{값}" 텍스트를 대각선 위에 표시
+    sections.forEach((sec, i) => {
+      const x1 = sec.x;
+      const x2 = sec.x + sec.w;
+      const rL = sec.rLeft || sec.r;  // v114: 좌측 반지름
+      const rR = sec.rRight || sec.r; // v114: 우측 반지름
+      const cLmm = sec.chamferLeft || 0;
+      const cRmm = sec.chamferRight || 0;
+      // ★ v112: 라벨 위치는 시각적 chamfer 크기(chamferPx)에 맞춤
+      const cLpx = chamferPx(cLmm, rL);
+      const cRpx = chamferPx(cRmm, rR);
+
+      if (cLpx > 0) {
+        // 좌측 모따기 치수: 대각선 중점 위에 텍스트
+        const midX = x1 + cLpx / 2;
+        const midY = oy - rL + cLpx / 2;
+        const chamLabel = `C${cLmm}`;
+        const ct = DrawingModel.createText(midX, midY - 3, chamLabel, 4);
+        ct.confidence = CONF.CONFIRMED;
+        ct.color = '#000000';
+        ct._chamferLabel = true;
+        doc.elements.push(ct);
+      }
+      if (cRpx > 0) {
+        // 우측 모따기 치수: 대각선 중점 위에 텍스트
+        const midX = x2 - cRpx / 2;
+        const midY = oy - rR + cRpx / 2;
+        const chamLabel = `C${cRmm}`;
+        const ct = DrawingModel.createText(midX, midY - 3, chamLabel, 4);
+        ct.confidence = CONF.CONFIRMED;
+        ct.color = '#000000';
+        ct._chamferLabel = true;
+        doc.elements.push(ct);
+      }
+    });
+
+    // ──── 3.4. 물결 생략선 구간용 PX 헬퍼 ────
+    // 구간 내부의 mm→px 변환 시, 생략선 구간은 축소 비율 반영 필요
+    // secPX(sec) = PX * sec._breakScale  (일반 구간은 1, 생략 구간은 0.10)
+    function secPX(sec) { return PX * (sec._breakScale || 1); }
 
     // ──── 3.5. 키홈 좌표 전처리 (누진치수 준비) ────
     // 키홈 hidden feature의 좌표를 미리 계산하여
@@ -1209,29 +1491,32 @@ const AIEngine = (() => {
       const hasRightOff = hf.keywayRightOffset != null && !isNaN(hf.keywayRightOffset);
       const hasOffset = hasLeftOff || hasRightOff;
 
+      // ★ 구간 내부 mm→px: 생략선 구간은 축소 비율 반영
+      const sPX = secPX(sec);
+
       if (hasLeftOff && hasRightOff) {
         actualLeftOff = hf.keywayLeftOffset;
         actualRightOff = hf.keywayRightOffset;
         actualKwWidth = sectionLenMm - actualLeftOff - actualRightOff;
         if (actualKwWidth <= 0) actualKwWidth = hf.keywayWidth;
-        kx1 = sec.x + actualLeftOff * PX;
-        kx2 = kx1 + actualKwWidth * PX;
+        kx1 = sec.x + actualLeftOff * sPX;
+        kx2 = kx1 + actualKwWidth * sPX;
       } else if (hasLeftOff) {
         actualLeftOff = hf.keywayLeftOffset;
-        kx1 = sec.x + actualLeftOff * PX;
-        kx2 = kx1 + hf.keywayWidth * PX;
+        kx1 = sec.x + actualLeftOff * sPX;
+        kx2 = kx1 + hf.keywayWidth * sPX;
         actualKwWidth = hf.keywayWidth;
         actualRightOff = sectionLenMm - actualLeftOff - actualKwWidth;
         if (actualRightOff < 0) actualRightOff = null;
       } else if (hasRightOff) {
         actualRightOff = hf.keywayRightOffset;
-        kx2 = sec.x + sec.w - actualRightOff * PX;
-        kx1 = kx2 - hf.keywayWidth * PX;
+        kx2 = sec.x + sec.w - actualRightOff * sPX;
+        kx1 = kx2 - hf.keywayWidth * sPX;
         actualKwWidth = hf.keywayWidth;
         actualLeftOff = sectionLenMm - actualKwWidth - actualRightOff;
         if (actualLeftOff < 0) actualLeftOff = null;
       } else {
-        const kwWidth = hf.keywayWidth * PX;
+        const kwWidth = hf.keywayWidth * sPX;
         const secCenterX = sec.x + sec.w / 2;
         kx1 = secCenterX - kwWidth / 2;
         kx2 = secCenterX + kwWidth / 2;
@@ -1256,134 +1541,14 @@ const AIEngine = (() => {
     //       (좌측이격=2, 키홈폭=32, 우측 나머지=16)
     //   각 치수선은 해당 구간의 시작~끝만 표시 (누적값 아님)
     //
+    // ★ v118: 키홈 오프셋 체인 치수 제거 — KEY 지시선 텍스트로 대체
+    // 기존: 좌측이격 + 키홈폭 + 우측나머지 체인 치수를 표시
+    // 변경: 체인 치수 생성하지 않음 → 기존 구간 길이 치수 유지
     const progressiveDimSections = {};
-    Object.values(keywayPreprocessed).forEach(kp => {
-      if (!kp.hasOffset) return;
-      const sec = sections.find(s => s.id === kp.sectionId);
-      if (!sec) return;
+    // (비활성화 — 키홈 오프셋 치수를 도면에 표시하지 않음)
 
-      const segments = []; // { startPx, endPx, mm } 개별 구간
-      const leftOffMm = kp.actualLeftOff;
-      const kwWidthMm = kp.actualKwWidth;
-      const secLenMm = sec.length;
-      const rightRemainMm = secLenMm - leftOffMm - kwWidthMm;
-
-      // 구간 1: 좌측 이격 (0 → leftOff)
-      if (leftOffMm != null && leftOffMm > 0) {
-        segments.push({
-          startPx: sec.x,
-          endPx: sec.x + leftOffMm * PX,
-          mm: leftOffMm,
-        });
-      }
-      // 구간 2: 키홈 폭 (leftOff → leftOff + kwWidth)
-      if (kwWidthMm > 0) {
-        const kwStartPx = sec.x + leftOffMm * PX;
-        segments.push({
-          startPx: kwStartPx,
-          endPx: kwStartPx + kwWidthMm * PX,
-          mm: kwWidthMm,
-        });
-      }
-      // 구간 3: 우측 나머지 (leftOff + kwWidth → section 끝)
-      if (rightRemainMm > 0.01) {
-        const remainStartPx = sec.x + (leftOffMm + kwWidthMm) * PX;
-        segments.push({
-          startPx: remainStartPx,
-          endPx: sec.x + sec.w,
-          mm: Math.round(rightRemainMm * 100) / 100,
-        });
-      }
-
-      progressiveDimSections[kp.sectionId] = { segments };
-    });
-
-    // ★ 스냅링 offset 체인 치수 빌드
-    // 키홈과 동일한 방식: offset이 있는 스냅링 구간은 체인 치수로 교체
-    // 예: S1=50mm, leftOff=3, srThick=1.5 → 3, 1.5, 45.5
-    (geo.hiddenFeatures || []).forEach(hf => {
-      if (hf.type !== 'snapring') return;
-      const sec = sections.find(s => s.id === hf.section);
-      if (!sec) return;
-
-      const srLeftOff = hf.snapRingLeftOffset;
-      const srRightOff = hf.snapRingRightOffset;
-      const srThick = hf.snapRingThickness;
-      const hasLeft = srLeftOff != null && !isNaN(srLeftOff);
-      const hasRight = srRightOff != null && !isNaN(srRightOff);
-      if (!hasLeft && !hasRight) return; // offset 없으면 체인 치수 불필요
-
-      // 이미 키홈으로 체인 치수가 있는 구간은 건너뜀 (충돌 방지)
-      if (progressiveDimSections[sec.id]) return;
-
-      const secLenMm = sec.length;
-      const segments = [];
-
-      if (hasLeft) {
-        const leftMm = srLeftOff;
-        // 구간 1: 좌측 이격
-        if (leftMm > 0) {
-          segments.push({
-            startPx: sec.x,
-            endPx: sec.x + leftMm * PX,
-            mm: leftMm,
-          });
-        }
-        // 구간 2: 스냅링 두께
-        if (srThick > 0) {
-          const srStartPx = sec.x + leftMm * PX;
-          segments.push({
-            startPx: srStartPx,
-            endPx: srStartPx + srThick * PX,
-            mm: srThick,
-          });
-        }
-        // 구간 3: 우측 나머지
-        const rightRemain = secLenMm - leftMm - srThick;
-        if (rightRemain > 0.01) {
-          const remainStart = sec.x + (leftMm + srThick) * PX;
-          segments.push({
-            startPx: remainStart,
-            endPx: sec.x + sec.w,
-            mm: Math.round(rightRemain * 100) / 100,
-          });
-        }
-      } else if (hasRight) {
-        const rightMm = srRightOff;
-        // 우측 offset 기준: 나머지 | 스냅링두께 | 우측이격
-        const leftRemain = secLenMm - srThick - rightMm;
-        // 구간 1: 좌측 나머지
-        if (leftRemain > 0.01) {
-          segments.push({
-            startPx: sec.x,
-            endPx: sec.x + leftRemain * PX,
-            mm: Math.round(leftRemain * 100) / 100,
-          });
-        }
-        // 구간 2: 스냅링 두께
-        if (srThick > 0) {
-          const srStartPx = sec.x + leftRemain * PX;
-          segments.push({
-            startPx: srStartPx,
-            endPx: srStartPx + srThick * PX,
-            mm: srThick,
-          });
-        }
-        // 구간 3: 우측 이격
-        if (rightMm > 0) {
-          segments.push({
-            startPx: sec.x + sec.w - rightMm * PX,
-            endPx: sec.x + sec.w,
-            mm: rightMm,
-          });
-        }
-      }
-
-      if (segments.length > 0) {
-        progressiveDimSections[sec.id] = { segments };
-        console.log(`[AI-Engine] SNAPRING chain dim for ${sec.id}:`, segments.map(s => s.mm));
-      }
-    });
+    // ★ v39: 스냅링 체인 치수 제거 — 두께는 지시선 텍스트에서 직경과 함께 표시
+    // (스냅링 두께를 별도 치수선으로 표시하지 않음)
 
     // ──── 4. 치수선 ────
     // 4-a) 구간별 길이
@@ -1420,6 +1585,15 @@ const AIEngine = (() => {
         // 모든 체인 치수를 동일한 치수선 Y 위치에 배치
         // 예: S1=50mm, leftOff=2, kwWidth=32 → 2, 32, 16
         //   |←2→|←──────32──────→|←──16──→|  ← 같은 수평선
+        //
+        // ★ v40: 좁은 치수 엘보 지시선 레벨 할당
+        //   renderer가 isNarrow 판단 시 사용하는 기준:
+        //     dimSpan < textWidth + 20   (textWidth = label.length * fontSize * 0.65)
+        //   여기서 동일 기준으로 미리 narrow 여부를 판단하고,
+        //   인접 narrow 치수에 순차적 레벨(0,1,2...)을 할당하여
+        //   엘보 높이를 점진적으로 다르게 한다.
+        const DIM_FONT_SIZE = 6;  // createDimension 기본 fontSize
+        let narrowLevel = 0;
         progData.segments.forEach((seg) => {
           const dim = DrawingModel.createDimension(
             seg.startPx, secTopY, seg.endPx, secTopY,
@@ -1427,6 +1601,16 @@ const AIEngine = (() => {
           );
           dim.confidence = CONF.CONFIRMED;
           dim._progressiveDim = true;
+
+          // narrow 판단 (renderer와 동일 로직)
+          const segSpan = Math.abs(seg.endPx - seg.startPx);
+          const labelStr = String(dim.value || '');
+          const labelW = labelStr.length * DIM_FONT_SIZE * 0.65;
+          const segIsNarrow = segSpan < labelW + 20;
+          if (segIsNarrow) {
+            dim._narrowLeaderLevel = narrowLevel++;
+          }
+
           doc.elements.push(dim);
         });
       } else {
@@ -1465,18 +1649,56 @@ const AIEngine = (() => {
         // 미감지 직경: placeholder '?' 치수
         const qDim = DrawingModel.createDiameterDimension(
           midX, oy - sec.r, midX, oy + sec.r,
-          '?', ann.unit, -35
+          '?', ann.unit, 0
         );
         qDim.confidence = CONF.UNCERTAIN;
         qDim._isPlaceholder = true;
         doc.elements.push(qDim);
         return;
       }
-      // 인접 이전 구간과 동일 직경이면 중복 생략 (연속된 같은 직경만)
-      if (i > 0 && sections[i - 1].diameter === diam) return;
+
+      // ★ v114→v115: 테이퍼 구간 — 양쪽 직경을 치수보조선으로 구간 바깥에 표시
+      //
+      //   문제: 테이퍼 내부에 치수를 배치하면 인접 구간 치수와 겹침
+      //   해결: createDimension (치수보조선 자동 생성) + 적절한 offset으로
+      //         좌측 직경은 왼쪽으로, 우측 직경은 오른쪽으로 배치
+      //
+      //   렌더러 동작: 수직 치수에서 offset > 0 → 치수선이 왼쪽으로 이동
+      //               offset < 0 → 치수선이 오른쪽으로 이동
+      //               치수보조선: 외형점 → 치수선 위치까지 파선으로 자동 연결
+      //
+      if (sec.isTaper && sec.diameterEnd != null) {
+        const rL = sec.rLeft || sec.r;
+        const rR = sec.rRight || sec.r;
+        const x1t = sec.x;
+        const x2t = sec.x + sec.w;
+        const taperDimOffset = 25;  // 구간 경계에서 치수선까지 거리 (px)
+
+        // ── 좌측 직경 (x1 경계, 왼쪽으로 오프셋) ──
+        const dDimL = DrawingModel.createDimension(
+          x1t, oy - rL, x1t, oy + rL,
+          `⌀${applyScale(diam)}`, ann.unit, taperDimOffset
+        );
+        dDimL.dimStyle = 'taperDiameter';  // 커스텀 스타일 태그
+        dDimL.confidence = sec.diameterConf || CONF.CONFIRMED;
+        doc.elements.push(dDimL);
+
+        // ── 우측 직경 (x2 경계, 오른쪽으로 오프셋) ──
+        const dDimR = DrawingModel.createDimension(
+          x2t, oy - rR, x2t, oy + rR,
+          `⌀${applyScale(sec.diameterEnd)}`, ann.unit, -taperDimOffset
+        );
+        dDimR.dimStyle = 'taperDiameter';
+        dDimR.confidence = sec.diameterConf || CONF.CONFIRMED;
+        doc.elements.push(dDimR);
+        return;
+      }
+
+      // 원통 구간: 인접 이전 구간과 동일 직경이면 중복 생략 (연속된 같은 직경만)
+      if (i > 0 && sections[i - 1].diameter === diam && !sections[i - 1].isTaper) return;
       const dDim = DrawingModel.createDiameterDimension(
         midX, oy - sec.r, midX, oy + sec.r,
-        applyScale(diam), ann.unit, -35
+        applyScale(diam), ann.unit, 0
       );
       dDim.confidence = sec.diameterConf || CONF.CONFIRMED;
       doc.elements.push(dDim);
@@ -1629,45 +1851,133 @@ const AIEngine = (() => {
         }
 
       } else if (hf.type === 'keyway') {
-        // ── 키홈: 바닥면 수평 1개 + 양 끝 수직 2개 ──
-        // v8: 좌표는 전처리(keywayPreprocessed)에서 이미 계산됨
-        //     치수는 누진치수(progressive dim)로 4-a)에서 통합 표시
+        // ── 키홈 렌더링 ──
+        // v116: keywayDirection에 따라 측면(side) / 정면(front) 렌더링 분기
+        const kwDirection = hf.keywayDirection || 'side';
         const preData = keywayPreprocessed[hf.id];
         let kx1, kx2;
         if (preData) {
           kx1 = preData.kx1;
           kx2 = preData.kx2;
         } else {
-          // 전처리 실패 시 폴백 (중심 배치)
           const kwWidth = hf.keywayWidth * PX;
           const secCenterX = sec.x + sec.w / 2;
           kx1 = secCenterX - kwWidth / 2;
           kx2 = secCenterX + kwWidth / 2;
         }
 
-        const keywayDepthPx = hf.keywayDepth * PX;
-        const yFloor = oy - sec.r + keywayDepthPx;
+        if (kwDirection === 'front') {
+          // ── v116: 정면(front) — 키홈 단면도를 구간 중심에 직접 그림 ──
+          // 보조투상도와 동일한 규칙이지만 메인 도면 위에 배치
+          // 구간의 수평 중심 & 중심선(oy)에 키홈 중심 일치
+          const kwCx = (kx1 + kx2) / 2;   // 키홈 수평 중심
+          const kwCy = oy;                 // 구간 중심선 = 키홈 중심선
+          const sw = kx2 - kx1;            // 키홈 폭 (px)
+          const sh = (hf.keywayHeight || 6) * PX;  // 키홈 높이 (px)
+          const kwShape = hf.keywayShape || 'obround';  // v117: 키 형상
 
-        // 바닥면 수평 파선
-        const floor = DrawingModel.createHiddenLine(kx1, yFloor, kx2, yFloor, 1);
-        floor.confidence = hf.confidence;
-        doc.elements.push(floor);
+          // ★ v119: 한쪽 둥근형 방향 결정 — 좌측 오프셋=0이면 오른쪽 둥글게, 우측 오프셋=0이면 왼쪽 둥글게
+          let roundSide = 'right'; // 기본값
+          if (kwShape === 'one-side-round') {
+            const loVal = parseFloat(hf.keywayLeftOffset);
+            const roVal = parseFloat(hf.keywayRightOffset);
+            const hasLeftOff = !isNaN(loVal);
+            const hasRightOff = !isNaN(roVal);
+            if (hasRightOff && roVal === 0) roundSide = 'left';
+            else if (hasLeftOff && loVal === 0) roundSide = 'right';
+          }
 
-        // 좌측 수직 파선 (축 상단 → 바닥면)
-        const leftV = DrawingModel.createHiddenLine(kx1, oy - sec.r, kx1, yFloor, 1);
-        leftV.confidence = hf.confidence;
-        doc.elements.push(leftV);
+          // 키홈 외형 (실선, 검정) — v117: 형상에 따라 obround/one-side-round/rect
+          const slot = DrawingModel.createSlot(kwCx - sw / 2, kwCy - sh / 2, sw, sh);
+          slot.confidence = hf.confidence;
+          slot.color = '#000000';
+          slot.slotShape = kwShape;  // v117: renderer에서 형상 분기
+          slot.slotRoundSide = roundSide;  // v118: 한쪽 둥근형 방향
+          slot._frontKeyway = true;
+          doc.elements.push(slot);
 
-        // 우측 수직 파선 (축 상단 → 바닥면)
-        const rightV = DrawingModel.createHiddenLine(kx2, oy - sec.r, kx2, yFloor, 1);
-        rightV.confidence = hf.confidence;
-        doc.elements.push(rightV);
+          // 수평 중심선 (키홈 중심선 = 구간 중심선과 일치)
+          const clH = DrawingModel.createCenterline(
+            kwCx - sw / 2 - 8, kwCy, kwCx + sw / 2 + 8, kwCy
+          );
+          clH.confidence = hf.confidence;
+          clH._frontKeyway = true;
+          doc.elements.push(clH);
 
-        // 치수선은 누진치수(4-a)에서 통합 처리 — 여기서는 생성하지 않음
+          // 수직 중심선
+          const clV = DrawingModel.createCenterline(
+            kwCx, kwCy - sh / 2 - 8, kwCx, kwCy + sh / 2 + 8
+          );
+          clV.confidence = hf.confidence;
+          clV._frontKeyway = true;
+          doc.elements.push(clV);
+
+        } else {
+          // ── 측면(side) — 기존 동작: 바닥면 수평 1개 + 양 끝 수직 2개 ──
+          const keywayDepthPx = hf.keywayDepth * PX;
+          const yFloor = oy - sec.r + keywayDepthPx;
+
+          // 바닥면 수평 파선
+          const floor = DrawingModel.createHiddenLine(kx1, yFloor, kx2, yFloor, 1);
+          floor.confidence = hf.confidence;
+          doc.elements.push(floor);
+
+          // 좌측 수직 파선 (축 상단 → 바닥면)
+          const leftV = DrawingModel.createHiddenLine(kx1, oy - sec.r, kx1, yFloor, 1);
+          leftV.confidence = hf.confidence;
+          doc.elements.push(leftV);
+
+          // 우측 수직 파선 (축 상단 → 바닥면)
+          const rightV = DrawingModel.createHiddenLine(kx2, oy - sec.r, kx2, yFloor, 1);
+          rightV.confidence = hf.confidence;
+          doc.elements.push(rightV);
+        }
 
         // 보조투상도 연동용 좌표 저장
         hf._resolvedKx1 = kx1;
         hf._resolvedKx2 = kx2;
+
+        // ── v118: KEY 지시선 주석 (모든 키홈 공통) ──
+        // 형식: KEY {W}Bx{H}Hx{D}DPx{L}L (두번째 사진 참고)
+        // W=폭, H=높이, D=깊이, L=키홈 실제 길이
+        {
+          const actualKwWidthMm = preData ? preData.actualKwWidth : hf.keywayWidth;
+          const kwHMm = hf.keywayHeight || 6;
+          const kwDMm = hf.keywayDepth || 3.5;
+          const kwLMm = actualKwWidthMm;  // 키홈 길이 = 키홈 폭
+          const keyLabel = `KEY ${applyScale(actualKwWidthMm)}Bx${applyScale(kwHMm)}Hx${applyScale(kwDMm)}DPx${applyScale(kwLMm)}L`;
+          const kwMidX = (kx1 + kx2) / 2;
+          const botY = oy + sec.r;
+
+          // 지시선 꺾임점: 키홈 중심 아래쪽 + 우측
+          const elbowX = kwMidX + 25;
+          const elbowY = botY + 16;
+          const kwGroupId = `grp_key_${hf.id}`;
+
+          // 지시선 1: 꺾임점 → 키홈 중심(화살표 방향)
+          const keyLeader1 = DrawingModel.createOutline(elbowX, elbowY, kwMidX, botY, 0.8);
+          keyLeader1.confidence = CONF.CONFIRMED;
+          keyLeader1.color = '#60a5fa';
+          keyLeader1._leaderLine = true;
+          keyLeader1._leaderArrow = true;
+          keyLeader1._groupId = kwGroupId;
+          doc.elements.push(keyLeader1);
+
+          // 지시선 2: 꺾임점 → 수평선 (텍스트 밑줄)
+          const keyTextW = keyLabel.length * 3.25;
+          const keyLeader2 = DrawingModel.createOutline(elbowX, elbowY, elbowX + keyTextW + 3, elbowY, 0.8);
+          keyLeader2.confidence = CONF.CONFIRMED;
+          keyLeader2.color = '#60a5fa';
+          keyLeader2._leaderLine = true;
+          keyLeader2._groupId = kwGroupId;
+          doc.elements.push(keyLeader2);
+
+          // 텍스트: 수평선 위
+          const keyText = DrawingModel.createText(elbowX + 2, elbowY - 2, keyLabel, 5);
+          keyText.confidence = CONF.CONFIRMED;
+          keyText._groupId = kwGroupId;
+          doc.elements.push(keyText);
+        }
 
       } else if (hf.type === 'snapring') {
         // ── 스냅링 홈: 구간 외경에서 안쪽으로 홈을 파는 굵은 실선 ──
@@ -1688,18 +1998,19 @@ const AIEngine = (() => {
         const srThickPx = srThick * PX;
 
         // 홈 X 좌표 계산 (좌측 offset 우선, 없으면 우측 offset)
+        const sPX_sr = secPX(sec);
         let grooveX1;
         if (srLeftOff != null && !isNaN(srLeftOff)) {
-          grooveX1 = sec.x + srLeftOff * PX;
+          grooveX1 = sec.x + srLeftOff * sPX_sr;
         } else if (srRightOff != null && !isNaN(srRightOff)) {
-          grooveX1 = sec.x + sec.w - srRightOff * PX - srThickPx;
+          grooveX1 = sec.x + sec.w - srRightOff * sPX_sr - srThickPx;
         } else {
           grooveX1 = sec.x + sec.w / 2 - srThickPx / 2; // 중심 폴백
         }
         const grooveX2 = grooveX1 + srThickPx;
 
-        // ★ v21: 굵은 실선(2px)으로 변경 — 얇은 홈도 뚜렷하게 표시
-        const SR_STROKE = 2;
+        // ★ v39: 스냅링 홈 + 실선 2줄 + 지시선(직경+두께)
+        const SR_STROKE = 1;  // v39: 홈 두께 1로 통일
 
         // 상단 홈 (축 상면에서 안쪽으로) — U자 형태
         const topY = oy - sec.r;
@@ -1721,33 +2032,42 @@ const AIEngine = (() => {
         const bR = DrawingModel.createOutline(grooveX2, botGrooveTop, grooveX2, botY, SR_STROKE);
         bR.confidence = hf.confidence; doc.elements.push(bR);
 
-        // ★ v21: 지시선(leader line) + 치수 텍스트 "스냅링 : {외경}Ø"
-        // 지시선: 홈 바닥 중앙 → 대각선 → 수평선 + 텍스트
+        // ★ v39: 홈에서 홈까지 두께 1 실선 2줄 (좌측 수직선, 우측 수직선)
+        //   상단 홈 바닥 → 하단 홈 바닥을 연결하는 수직 실선 2개
+        const srLineL = DrawingModel.createOutline(grooveX1, topGrooveBottom, grooveX1, botGrooveTop, 1);
+        srLineL.confidence = hf.confidence; doc.elements.push(srLineL);
+        const srLineR = DrawingModel.createOutline(grooveX2, topGrooveBottom, grooveX2, botGrooveTop, 1);
+        srLineR.confidence = hf.confidence; doc.elements.push(srLineR);
+
+        // ★ v39: 지시선 텍스트에 직경 + 두께 함께 표시
         const grooveMidX = (grooveX1 + grooveX2) / 2;
-        // 화살표 시작점: 하단 홈의 안쪽 바닥(구간 외경 쪽)
         const arrowX = grooveMidX;
         const arrowY = botGrooveTop;
-        // 꺾임점: 아래쪽 대각선으로 빠져나감
         const srElbowX = grooveMidX + 20;
         const srElbowY = botY + 18;
-        // 지시선 1: 꺾임점 → 화살표(홈) (대각선, 화살표 마커 포함)
+        // ★ v110: 스냅링 그룹 선택용 _groupId
+        const srGroupId = `grp_snap_${hf.id}`;
+        // 지시선 1: 꺾임점 → 화살표(홈)
         const srLeader1 = DrawingModel.createOutline(srElbowX, srElbowY, arrowX, arrowY, 0.8);
         srLeader1.confidence = CONF.CONFIRMED;
         srLeader1.color = '#60a5fa';
         srLeader1._leaderLine = true;
         srLeader1._leaderArrow = true;
+        srLeader1._groupId = srGroupId;  // v110
         doc.elements.push(srLeader1);
         // 지시선 2: 꺾임점 → 수평선 (텍스트 밑줄)
-        const srLabel = `스냅링 : ${srDiam}Ø`;
+        const srLabel = `스냅링 : ${srDiam}Ø × ${srThick}t`;
         const srTextW = srLabel.length * 3.25;
         const srLeader2 = DrawingModel.createOutline(srElbowX, srElbowY, srElbowX + srTextW + 3, srElbowY, 0.8);
         srLeader2.confidence = CONF.CONFIRMED;
         srLeader2.color = '#60a5fa';
         srLeader2._leaderLine = true;
+        srLeader2._groupId = srGroupId;  // v110
         doc.elements.push(srLeader2);
         // 텍스트: 수평선 위
         const srText = DrawingModel.createText(srElbowX + 2, srElbowY - 2, srLabel, 5);
         srText.confidence = CONF.CONFIRMED;
+        srText._groupId = srGroupId;  // v110
         doc.elements.push(srText);
 
       } else if (hf.type === 'through-hole') {
@@ -1758,7 +2078,7 @@ const AIEngine = (() => {
         // X 위치: 좌측 이격이 있으면 사용, 없으면 구간 중심
         let thCenterX;
         if (hf.offsetFromLeft != null && !isNaN(hf.offsetFromLeft)) {
-          thCenterX = sec.x + hf.offsetFromLeft * PX;
+          thCenterX = sec.x + hf.offsetFromLeft * secPX(sec);
         } else {
           thCenterX = sec.x + sec.w / 2;
         }
@@ -1783,12 +2103,15 @@ const AIEngine = (() => {
         const thArrowY = thYtop;
         const thElbowX = thCenterX + 20;
         const thElbowY = thYtop - 18;
+        // ★ v110: 관통 구멍 그룹 선택용 _groupId
+        const thGroupId = `grp_thru_${hf.id}`;
         // 지시선 1: 꺾임점 → 화살표
         const thLeader1 = DrawingModel.createOutline(thElbowX, thElbowY, thArrowX, thArrowY, 0.8);
         thLeader1.confidence = CONF.CONFIRMED;
         thLeader1.color = '#60a5fa';
         thLeader1._leaderLine = true;
         thLeader1._leaderArrow = true;
+        thLeader1._groupId = thGroupId;  // v110
         doc.elements.push(thLeader1);
         // 지시선 2: 수평선
         const thLabel = `Ø${hf.diameter} DR 관통`;
@@ -1797,10 +2120,12 @@ const AIEngine = (() => {
         thLeader2.confidence = CONF.CONFIRMED;
         thLeader2.color = '#60a5fa';
         thLeader2._leaderLine = true;
+        thLeader2._groupId = thGroupId;  // v110
         doc.elements.push(thLeader2);
         // 텍스트
         const thText = DrawingModel.createText(thElbowX + 2, thElbowY - 2, thLabel, 5);
         thText.confidence = CONF.CONFIRMED;
+        thText._groupId = thGroupId;  // v110
         doc.elements.push(thText);
       }
       // 미지의 type은 무시
@@ -1814,7 +2139,7 @@ const AIEngine = (() => {
     geo.slots.forEach(sl => {
       const sec = sections.find(s => s.id === sl.cx_section);
       if (!sec) return;
-      const slX = sec.x + sl.cx_offset * PX;
+      const slX = sec.x + sl.cx_offset * secPX(sec);
       const slW = sl.slotLength * PX;
       const slH = sl.slotWidth * PX;
 
@@ -1930,6 +2255,9 @@ const AIEngine = (() => {
       const sec = sections.find(s => s.id === ts.section);
       if (!sec) return;
 
+      // ★ v110: 그룹 선택용 — TAP 주석의 모든 요소에 동일 _groupId 부여
+      const tapGroupId = `grp_tap_${ts.holeId || ts.section}`;
+
       // 지시선: 구멍 끝면 중심 → 꺾임점 → 수평 → 텍스트
       const tapR = hf ? (hf.diameter / 2 * PX) : 5;
       const tapDepth = hf ? (hf.depth * PX) : 30;
@@ -1967,6 +2295,7 @@ const AIEngine = (() => {
       leader1.color = '#60a5fa';
       leader1._leaderLine = true;
       leader1._leaderArrow = true; // 렌더러에서 화살표 마커 적용
+      leader1._groupId = tapGroupId;  // v110
       doc.elements.push(leader1);
 
       // 지시선 2: 꺾임점 → 수평선 (텍스트 밑줄)
@@ -1976,12 +2305,14 @@ const AIEngine = (() => {
       leader2.confidence = CONF.CONFIRMED;
       leader2.color = '#60a5fa';
       leader2._leaderLine = true;
+      leader2._groupId = tapGroupId;  // v110
       doc.elements.push(leader2);
 
       // 텍스트: 수평선 위에
       const t = DrawingModel.createText(textX, textY - 2, specText, 5);
       t.confidence = ts.spec ? ts.specConf : CONF.UNCERTAIN;
       t._isPlaceholder = !ts.spec;
+      t._groupId = tapGroupId;  // v110
       doc.elements.push(t);
 
       // ★ 드릴 규격 표기 — TAP 텍스트 아래에 "Ø'D' 드릴 DP'H'"
@@ -1997,9 +2328,11 @@ const AIEngine = (() => {
         drillLine.confidence = CONF.CONFIRMED;
         drillLine.color = '#60a5fa';
         drillLine._leaderLine = true;
+        drillLine._groupId = tapGroupId;  // v110
         doc.elements.push(drillLine);
         const drillText = DrawingModel.createText(textX, drillLineY - 2, drillLabel, 5);
         drillText.confidence = CONF.CONFIRMED;
+        drillText._groupId = tapGroupId;  // v110
         doc.elements.push(drillText);
       }
 
@@ -2013,10 +2346,12 @@ const AIEngine = (() => {
         cbLine.confidence = CONF.CONFIRMED;
         cbLine.color = '#60a5fa';
         cbLine._leaderLine = true;
+        cbLine._groupId = tapGroupId;  // v110
         doc.elements.push(cbLine);
         // C/B 텍스트
         const cbText = DrawingModel.createText(textX, cbLineY - 2, cbLabel, 5);
         cbText.confidence = CONF.CONFIRMED;
+        cbText._groupId = tapGroupId;  // v110
         doc.elements.push(cbText);
       }
     });
@@ -2025,7 +2360,7 @@ const AIEngine = (() => {
     geo.slots.forEach(sl => {
       const sec = sections.find(s => s.id === sl.cx_section);
       if (!sec) return;
-      const slX = sec.x + sl.cx_offset * PX;
+      const slX = sec.x + sl.cx_offset * secPX(sec);
       const t = DrawingModel.createText(slX, oy - sec.r - 20,
         `슬롯 ${sl.slotLength}x${sl.slotWidth}`, 5);
       t.confidence = sl.confidence;
@@ -2110,12 +2445,20 @@ const AIEngine = (() => {
           ? Math.round((relatedHf._resolvedKx2 - relatedHf._resolvedKx1) / PX * 100) / 100
           : shape.width;
 
-        if (shape.type === 'obround') {
+        // v117: shape.type에 따라 키 형상 렌더링 — obround / one-side-round / rect 모두 createSlot 사용
+        if (shape.type === 'obround' || shape.type === 'one-side-round' || shape.type === 'rect') {
           const slot = DrawingModel.createSlot(
             auxCx - sw / 2, auxCy - sh / 2, sw, sh
           );
           slot.confidence = shape.confidence;
           slot._auxViewId = aux.id;
+          slot.slotShape = shape.type;  // v117: renderer에서 형상 분기
+          // ★ v119: 한쪽 둥근형 방향 결정 (보조투상도)
+          if (shape.type === 'one-side-round' && relatedHf) {
+            const roVal = parseFloat(relatedHf.keywayRightOffset);
+            if (!isNaN(roVal) && roVal === 0) slot.slotRoundSide = 'left';
+            else slot.slotRoundSide = 'right';
+          }
           // v6.0: 보조투상도 외형은 검정색 실선 (PDF 출력 대비)
           slot.color = '#000000';
           doc.elements.push(slot);
@@ -2130,26 +2473,26 @@ const AIEngine = (() => {
           doc.elements.push(cl);
           auxViewElements.push(cl);
         } else {
-          // 직사각형 (실선 — 숨은선 아님!)
-          const topL = DrawingModel.createOutline(auxCx - sw/2, auxCy - sh/2, auxCx + sw/2, auxCy - sh/2, 2);
+          // 직사각형 폴백 (실선 — 숨은선 아님!)
+          const topL = DrawingModel.createOutline(auxCx - sw/2, auxCy - sh/2, auxCx + sw/2, auxCy - sh/2, 1);
           topL.confidence = shape.confidence;
           topL._auxViewId = aux.id;
           doc.elements.push(topL);
           auxViewElements.push(topL);
 
-          const botL = DrawingModel.createOutline(auxCx - sw/2, auxCy + sh/2, auxCx + sw/2, auxCy + sh/2, 2);
+          const botL = DrawingModel.createOutline(auxCx - sw/2, auxCy + sh/2, auxCx + sw/2, auxCy + sh/2, 1);
           botL.confidence = shape.confidence;
           botL._auxViewId = aux.id;
           doc.elements.push(botL);
           auxViewElements.push(botL);
 
-          const leftL = DrawingModel.createOutline(auxCx - sw/2, auxCy - sh/2, auxCx - sw/2, auxCy + sh/2, 2);
+          const leftL = DrawingModel.createOutline(auxCx - sw/2, auxCy - sh/2, auxCx - sw/2, auxCy + sh/2, 1);
           leftL.confidence = shape.confidence;
           leftL._auxViewId = aux.id;
           doc.elements.push(leftL);
           auxViewElements.push(leftL);
 
-          const rightL = DrawingModel.createOutline(auxCx + sw/2, auxCy - sh/2, auxCx + sw/2, auxCy + sh/2, 2);
+          const rightL = DrawingModel.createOutline(auxCx + sw/2, auxCy - sh/2, auxCx + sw/2, auxCy + sh/2, 1);
           rightL.confidence = shape.confidence;
           rightL._auxViewId = aux.id;
           doc.elements.push(rightL);
@@ -2319,27 +2662,62 @@ const AIEngine = (() => {
       }
     }
 
-    // ──── 9.6. 체인기어(스프라켓) 렌더링 ────
+    // ──── 9.6. 체인스프라켓(스프라켓) 렌더링 ────
     //
-    // 체인기어는 축의 끝(S1 좌측 또는 Sn 우측)에 그린다.
+    // ★ 배치 모드 2가지:
+    // A) 기존: placement='edge' (기본값) — 축의 끝(S1 좌측 또는 Sn 우측)에 그린다.
+    //    - section: 기준 구간, side: 'left'/'right'
+    //    - 보조투상도(end view) 생성
+    //
+    // B) 신규: placement='between' — 두 구간 사이에 그린다.
+    //    - sectionLeft, sectionRight: 좌/우 인접 구간
+    //    - bossDirection: 'left'(보스가 왼쪽 구간 방향) / 'right'(보스가 오른쪽 구간 방향)
+    //    - 보조투상도 생성하지 않음
+    //    - 구조 (bossDirection='left'):
+    //        [좌측구간]─[boss]─[기어본체]─[우측구간]
+    //        R값은 기어 반대쪽(우측)에 적용
+    //    - 구조 (bossDirection='right'):
+    //        [좌측구간]─[기어본체]─[boss]─[우측구간]
+    //        R값은 기어 반대쪽(좌측)에 적용
+    //
     // 정면도(side view): 기어 단면 + 보스(per-boss R값) + 보어 숨은선
     //   — 참고도면 구조: [보스1]─[기어본체]─[보스2] 형태의 단면
     //   — 기어본체는 외경 높이 직사각형, 보스는 기어와 단차를 이루는 작은 직경 직사각형
     //   — 각 보스의 4개 모서리(좌상, 좌하, 우상, 우하)에 대해 R값 적용 가능
     //   — R 적용위치: 'left' = 보스 정면도 좌측 상하, 'right' = 우측 상하, 'both' = 양쪽 모두
     // 보조투상도(end view): 이끝원 = 등분점만 표시(원 자체 삭제), 이뿌리원, 보어, 키홈, 톱니형상
+    //   (placement='between'일 때는 생략)
     //
     const RS_PITCH_MAP = { RS25: 6.35, RS35: 9.525, RS40: 12.7, RS50: 15.875, RS60: 19.05, RS80: 25.4, RS100: 31.75, RS120: 38.1 };
     const chainGears = spec.chainGears || [];
     chainGears.forEach((cg, cgIdx) => {
-      const sec = sections.find(s => s.id === cg.section);
-      if (!sec) return;
+      const isBetween = cg.placement === 'between';
 
-      const side = cg.side; // 'left' or 'right'
+      // ── 구간 참조 해석 ──
+      let sec;        // 기준 구간 (edge: 단일, between: 좌측 구간)
+      let secRight;   // between 전용: 우측 구간
+      let side;       // edge 전용: 'left'/'right'
+      let secR;       // 기준 구간 반지름 px
+
+      if (isBetween) {
+        sec = sections.find(s => s.id === cg.sectionLeft);
+        secRight = sections.find(s => s.id === cg.sectionRight);
+        if (!sec || !secRight) return;
+        // between 모드에서 side는 bossDirection으로부터 매핑
+        // bossDirection='left' → 보스가 좌측구간 쪽 → side='left' (기어본체가 우측)
+        // bossDirection='right' → 보스가 우측구간 쪽 → side='right' (기어본체가 좌측)
+        side = cg.bossDirection || 'left';
+        secR = sec.r;
+      } else {
+        sec = sections.find(s => s.id === cg.section);
+        if (!sec) return;
+        side = cg.side; // 'left' or 'right'
+        secR = sec.r; // 축(section) 반지름 px
+      }
+
       const gearOuterR = (cg.outerDiam / 2) * PX;
       const gearBoreR = (cg.boreDiam / 2) * PX;
       const gearWidthPx = (cg.gearWidth || 8) * PX;
-      const secR = sec.r; // 축(section) 반지름 px
 
       // ── per-boss 데이터 가져오기 (하위호환 포함) ──
       const bossList = [];
@@ -2364,22 +2742,51 @@ const AIEngine = (() => {
 
       // ── 1) 정면도: 전체 단면 프로필 ──
       // ★ 수정: 보스는 모두 기어 뒤(축쪽)에 위치
-      // 구조: side=left → [기어본체]─[boss1]─[boss2]─[축] (좌→우)
-      //        side=right → [축]─[boss2]─[boss1]─[기어본체] (좌→우)
+      // 보스 순서: boss1이 스프라켓에 가장 가까움, bossN이 축(또는 구간)에 가장 가까움
+      // 구조 (edge):
+      //   bossDirection=right (side=left): [기어본체]─[boss1]─[boss2]─...─[bossN]─[축] (좌→우)
+      //   bossDirection=left  (side=right): [축]─[bossN]─...─[boss2]─[boss1]─[기어본체] (좌→우)
+      // 구조 (between):
+      //   bossDirection=left:  [좌측구간]─[bossN]─...─[boss1]─[기어본체]─[우측구간]
+      //   bossDirection=right: [좌측구간]─[기어본체]─[boss1]─...─[bossN]─[우측구간]
       // 기어본체 위치 계산
       let gearX; // 기어 본체 좌측 X
       // 보스는 모두 기어와 축 사이 (기어 뒤쪽)
+      // N개 보스 지원 (per-boss thickness 배열)
+      const bossThickPx = bossList.map(b => (b && b.thickness > 0) ? b.thickness * PX : 0);
+      const bossRadiusPx = bossList.map(b => (b && b.outerDiam > 0) ? (b.outerDiam / 2) * PX : 0);
+      const totalBossThick = bossThickPx.reduce((sum, t) => sum + t, 0);
+      // 하위호환: boss1/boss2 참조 유지
       const boss1 = bossList.length > 0 ? bossList[0] : null;
       const boss2 = bossList.length > 1 ? bossList[1] : null;
-      const b1Thick = (boss1 && boss1.thickness > 0) ? boss1.thickness * PX : 0;
-      const b2Thick = (boss2 && boss2.thickness > 0) ? boss2.thickness * PX : 0;
-      const totalBossThick = b1Thick + b2Thick;
+      const b1Thick = bossThickPx[0] || 0;
+      const b2Thick = bossThickPx[1] || 0;
 
-      if (side === 'left') {
-        // [기어]─[boss1]─[boss2]─[축S1]
+      if (isBetween) {
+        // ── between 모드: 구간 사이 gap에 배치 ──
+        // ★ 구간 좌표 계산 단계에서 sec 뒤에 gap이 삽입되었으므로,
+        //   sec.x+sec.w 와 secRight.x 사이에 실제 gap이 존재한다.
+        //   이 gap 안에 조립체를 중앙 배치한다.
+        //   결과: S2 ─ [스프라켓] ─ S3 (스프라켓이 양쪽 구간 사이에 시각적으로 분리)
+        const gapLeft = sec.x + sec.w;       // 좌측구간 우측 끝
+        const gapRight = secRight.x;          // 우측구간 좌측 끝 (gap 삽입으로 gapLeft < gapRight)
+        const gapCenter = (gapLeft + gapRight) / 2;
+        const assemblyWidth = gearWidthPx + totalBossThick;
+        // 조립체를 gap 중앙에 배치
+        // bossDirection='left' → [bossN]─...─[boss1]─[기어본체]
+        // bossDirection='right' → [기어본체]─[boss1]─...─[bossN]
+        if (side === 'left') {
+          const assemblyLeft = gapCenter - assemblyWidth / 2;
+          gearX = assemblyLeft + totalBossThick;
+        } else {
+          const assemblyLeft = gapCenter - assemblyWidth / 2;
+          gearX = assemblyLeft;
+        }
+      } else if (side === 'left') {
+        // edge 모드: [기어]─[boss1]─[boss2]─[축S1]
         gearX = sec.x - gearWidthPx - totalBossThick;
       } else {
-        // [축SN]─[boss2]─[boss1]─[기어]
+        // edge 모드: [축SN]─[boss2]─[boss1]─[기어]
         gearX = sec.x + sec.w + totalBossThick;
       }
 
@@ -2392,44 +2799,56 @@ const AIEngine = (() => {
       // ★ 규칙: 기어를 옆에서 보면 이빨 방향에 따라 선 위치가 매번 변하므로,
       //   간략화하여 상/하단에 사다리꼴 1개씩만 표현한다.
       //
-      // ★ 높이 규칙: 보조투상도(end view)에서 이끝원 = 외경(Ø31).
-      //   정면도(side view)에서도 전체 높이 = 외경 = gTopY~gBotY.
+      // ★ 정면도 구조 (사다리꼴은 본체 폭의 중앙 ~50%만 차지):
       //
-      //   정면도 구조 (단면 프로파일):
-      //     gLeft ─────────── gRight    ← gTopY (외경 = 이끝, 전체폭 수평선)
-      //      │ ╲             ╱ │
-      //      │  rootL───rootR  │        ← rootTopY (이뿌리 수평선, 좁음)
-      //      │                 │        (기어본체 — 수직선 전체 높이)
-      //      │  rootL───rootR  │        ← rootBotY
-      //      │ ╱             ╲ │
-      //     gLeft ─────────── gRight    ← gBotY (외경 = 이끝, 전체폭 수평선)
+      //     gLeft                                    gRight
+      //       │                                        │
+      //       ├──rootTopY─┬─── tipL──tipR ───┬─rootTopY─┤    ← rootTopY
+      //       │  (수평선)  ╱    (이끝수평선)    ╲  (수평선)  │
+      //       │         ╱                      ╲         │
+      //       │       tipL                    tipR        │    ← gTopY (이끝)
+      //       │           (사다리꼴 영역)                   │
+      //       ├──rootBotY─┬─── tipL──tipR ───┬─rootBotY─┤    ← rootBotY
+      //       │  (수평선)  ╲                  ╱  (수평선)  │
+      //       │                                          │
       //
-      //   사다리꼴은 외경 수평선(넓은쪽)에서 이뿌리(좁은쪽)로 좁아짐
+      //   사다리꼴 양쪽에는 이뿌리 수평선(rootL까지, rootR부터), 양끝에 수직선(외형선)
+      // ★ 사다리꼴 규칙:
+      //   밑변(넓은쪽) = 체인스프라켓 두께 (gLeft ~ gRight, 즉 gearWidthPx 전체)
+      //   높이 = 피치값 기반
+      //   윗변(좁은쪽) = 밑변보다 좁게 (tipInset 만큼 안쪽)
+      //
+      //   정면도 구조:
+      //        tipL────tipR            ← gTopY (이끝, 좁은쪽)
+      //       ╱              ╲
+      //   gLeft──────────────gRight    ← rootTopY (이뿌리 = 본체 상단)
+      //   │      (본체 영역)       │
+      //   gLeft──────────────gRight    ← rootBotY (이뿌리 = 본체 하단)
+      //       ╲              ╱
+      //        tipL────tipR            ← gBotY (이끝, 좁은쪽)
+      //
       const gPitch = RS_PITCH_MAP[cg.chainSpec] || 9.525;
-      const gToothH = gPitch * 0.2 * PX; // 톱니 높이 (px) — 피치의 20% (보조투상도와 동일)
+      const gToothH = gPitch * 0.3 * PX; // 톱니 높이 (px) — 피치의 30%
 
-      // Y 기준: gTopY/gBotY = 외경(이끝) 경계
-      // 이뿌리(root)는 안쪽으로 들어감
-      const rootTopY = gTopY + gToothH;   // 상단 이뿌리 (외경에서 안쪽)
-      const rootBotY = gBotY - gToothH;   // 하단 이뿌리 (외경에서 안쪽)
+      // Y 기준: gTopY/gBotY = 외경(이끝) 경계 (사다리꼴 팁, 바깥)
+      //         rootTopY/rootBotY = 이뿌리 (본체 상·하단, 안쪽)
+      const rootTopY = gTopY + gToothH;   // 본체 상단
+      const rootBotY = gBotY - gToothH;   // 본체 하단
 
-      // 사다리꼴: 이끝(tip, gTopY)이 좁고 이뿌리(root, rootTopY)가 넓음
-      // ★ 규칙: 기어 톱니는 이뿌리(root)에서 이끝(tip)으로 갈수록 좁아짐.
-      //   정면도에서 보면 이뿌리 높이(rootTopY)에서는 전체 폭,
-      //   이끝 높이(gTopY)에서는 좁은 사다리꼴 팁.
-      //   이렇게 하면 보조투상도의 톱니 형상과 시각적으로 일치.
+      // 사다리꼴 밑변 = 스프라켓 두께 전체 (gLeft ~ gRight)
+      // 사다리꼴 윗변 = 밑변에서 20% 안쪽
       const tipInset = gearWidthPx * 0.20;
       const tipLeft = gLeft + tipInset;
       const tipRight = gRight - tipInset;
 
-      // ── 상단 사다리꼴 (이뿌리→이끝, 넓→좁, 위쪽) ──
-      // 이뿌리-좌 → 이끝-좌 (경사: 넓→좁)
+      // ── 상단 사다리꼴 ──
+      // 좌측 경사: gLeft,rootTopY → tipLeft,gTopY
       const tl1 = DrawingModel.createOutline(gLeft, rootTopY, tipLeft, gTopY, 1);
       tl1.confidence = cg.confidence; doc.elements.push(tl1);
-      // 이끝 수평선 (좁은쪽, tip flat)
+      // 윗변 수평: tipLeft,gTopY → tipRight,gTopY
       const tl2 = DrawingModel.createOutline(tipLeft, gTopY, tipRight, gTopY, 1);
       tl2.confidence = cg.confidence; doc.elements.push(tl2);
-      // 이끝-우 → 이뿌리-우 (경사: 좁→넓)
+      // 우측 경사: tipRight,gTopY → gRight,rootTopY
       const tl3 = DrawingModel.createOutline(tipRight, gTopY, gRight, rootTopY, 1);
       tl3.confidence = cg.confidence; doc.elements.push(tl3);
 
@@ -2441,33 +2860,39 @@ const AIEngine = (() => {
       const bl3 = DrawingModel.createOutline(tipRight, gBotY, gRight, rootBotY, 1);
       bl3.confidence = cg.confidence; doc.elements.push(bl3);
 
-      // ── 상·하단 이뿌리 수평선 (전체폭) ──
-      // ★ 이뿌리(root) 높이에서 전체 폭 수평선 (기어 본체 상단/하단 윤곽)
-      const gRootTopLine = DrawingModel.createOutline(gLeft, rootTopY, gRight, rootTopY, 0.6);
-      gRootTopLine.confidence = cg.confidence; doc.elements.push(gRootTopLine);
-      const gRootBotLine = DrawingModel.createOutline(gLeft, rootBotY, gRight, rootBotY, 0.6);
-      gRootBotLine.confidence = cg.confidence; doc.elements.push(gRootBotLine);
+      // ── 본체 상·하단 수평선 (본체와 기어이빨 경계) ──
+      const rootTopLine = DrawingModel.createOutline(gLeft, rootTopY, gRight, rootTopY, 1);
+      rootTopLine.confidence = cg.confidence; doc.elements.push(rootTopLine);
+      const rootBotLine = DrawingModel.createOutline(gLeft, rootBotY, gRight, rootBotY, 1);
+      rootBotLine.confidence = cg.confidence; doc.elements.push(rootBotLine);
 
-      // ── 좌측·우측 수직선 (이뿌리 구간만, 양쪽 모두) ──
-      // ★ 규칙: 기어 정면도 전체 높이 = 외경(Ø31) = gTopY ~ gBotY.
-      //   상·하단 사다리꼴 구간(gTopY~rootTopY, rootBotY~gBotY)에는 경사선이 있으므로
-      //   수직선은 사다리꼴이 없는 이뿌리 구간(rootTopY~rootBotY)만 그림.
-      //   ★ 좌우 양쪽 모두 수직선을 그림 (사용자 피드백: 한쪽만 그리면 안 됨)
+      // ── 좌측·우측 수직선 (기어 본체 외형선) ──
       const vL = DrawingModel.createOutline(gLeft, rootTopY, gLeft, rootBotY, 1);
       vL.confidence = cg.confidence; doc.elements.push(vL);
       const vR = DrawingModel.createOutline(gRight, rootTopY, gRight, rootBotY, 1);
       vR.confidence = cg.confidence; doc.elements.push(vR);
-
-      // ★ 이뿌리 수평선은 상단/하단 사다리꼴의 tl2/bl2에서 이미 그림 (rootLeft~rootRight 구간)
-      // 별도의 전체폭 root line 불필요
 
       // ── 보어 내경 숨은선 ──
       if (cg.boreDiam > 0) {
         const boreTopY = oy - gearBoreR;
         const boreBotY = oy + gearBoreR;
         // ★ 보스가 모두 축쪽이므로 전체 범위 재계산
-        const hLeft = (side === 'left') ? gLeft : gLeft - totalBossThick;
-        const hRight = (side === 'left') ? gRight + totalBossThick : gRight;
+        let hLeft, hRight;
+        if (isBetween) {
+          // between: 보스가 bossDirection 쪽에 위치
+          if (side === 'left') {
+            // bossDirection='left': [boss]─[기어] → 보어는 전체 범위
+            hLeft = gLeft - totalBossThick;
+            hRight = gRight;
+          } else {
+            // bossDirection='right': [기어]─[boss] → 보어는 전체 범위
+            hLeft = gLeft;
+            hRight = gRight + totalBossThick;
+          }
+        } else {
+          hLeft = (side === 'left') ? gLeft : gLeft - totalBossThick;
+          hRight = (side === 'left') ? gRight + totalBossThick : gRight;
+        }
         const boreTop = DrawingModel.createHiddenLine(hLeft, boreTopY, hRight, boreTopY, 0.8);
         boreTop.confidence = cg.confidence; doc.elements.push(boreTop);
         const boreBot = DrawingModel.createHiddenLine(hLeft, boreBotY, hRight, boreBotY, 0.8);
@@ -2817,74 +3242,120 @@ const AIEngine = (() => {
         }
       }
 
-      // ★ 보스는 모두 기어 뒤(축쪽)에 위치
-      // side=left: [기어]─[boss1]─[boss2]─[축] (좌→우)
-      // side=right: [축]─[boss2]─[boss1]─[기어] (좌→우)
-      const boss1R = boss1 ? (boss1.outerDiam / 2) * PX : 0;
-      const boss2R = boss2 ? (boss2.outerDiam / 2) * PX : 0;
+      // ★ N개 보스 렌더링 — 일반화된 루프
+      // 보스 순서: boss[0](=boss1)이 스프라켓에 가장 가까움, boss[N-1]이 축/구간에 가장 가까움
+      // 배치 방향:
+      //   bossesGoRight=true  → [기어]─[boss1]─[boss2]─...─[bossN]─[축/구간] (좌→우)
+      //   bossesGoRight=false → [축/구간]─[bossN]─...─[boss2]─[boss1]─[기어] (좌→우)
+      const secLeftR = sec.r;
+      const secRightR = isBetween ? secRight.r : secR;
 
-      // ★ 인접 보스 간 R값 유무에 따른 단차 중복 방지
-      // boss1의 우측 R이 있으면 → boss2 좌측 단차 스킵 (boss1이 이미 처리)
-      // boss2의 좌측 R이 있으면 → boss1 우측 단차 스킵 (boss2가 이미 처리)
-      const b1HasRRight = boss1?.fillet?.value > 0 && (boss1.fillet.side === 'both' || boss1.fillet.side === 'right');
-      const b1HasRLeft = boss1?.fillet?.value > 0 && (boss1.fillet.side === 'both' || boss1.fillet.side === 'left');
-      const b2HasRRight = boss2?.fillet?.value > 0 && (boss2.fillet.side === 'both' || boss2.fillet.side === 'right');
-      const b2HasRLeft = boss2?.fillet?.value > 0 && (boss2.fillet.side === 'both' || boss2.fillet.side === 'left');
-
-      if (side === 'left') {
-        // [기어]─[boss1]─[boss2]─[축] (좌→우)
-        // boss1-boss2 접합: boss1 우측 = boss2 좌측
-        // ★ R이 있는 쪽이 단차를 그리고, 없는 쪽은 스킵 (중복 방지)
-        // ★ 양쪽 다 R 없으면 큰 보스(boss1)가 단차를 그리고 작은 보스(boss2) 스킵
-        let b1SkipR = boss2 && b2HasRLeft;
-        let b2SkipL = boss1 && b1HasRRight;
-        // 양쪽 다 R이 없는 경우: boss2(작은쪽)가 스킵
-        if (boss1 && boss2 && !b1SkipR && !b2SkipL) {
-          b2SkipL = true;
-        }
-
-        if (boss1 && boss1.outerDiam > 0 && boss1.thickness > 0) {
-          const b1X = gRight;
-          const adjL = gearOuterR;
-          const adjR = (boss2 && boss2.outerDiam > 0) ? boss2R : secR;
-          renderBoss(boss1, b1X, b1Thick, adjL, adjR, cg.confidence, false, b1SkipR, 'gear', boss2 ? 'boss' : 'section');
-        }
-        if (boss2 && boss2.outerDiam > 0 && boss2.thickness > 0) {
-          const b2X = gRight + b1Thick;
-          const adjL = boss1R > 0 ? boss1R : gearOuterR;
-          const adjR = secR;
-          renderBoss(boss2, b2X, b2Thick, adjL, adjR, cg.confidence, b2SkipL, false, boss1 ? 'boss' : 'gear', 'section');
-        }
+      // 보스가 기어 오른쪽에 놓이는가?
+      let bossesGoRight;
+      if (isBetween) {
+        bossesGoRight = (side === 'right'); // bossDirection='right' → 기어 오른쪽에 보스
       } else {
-        // side=right: [축]─[boss2]─[boss1]─[기어] (좌→우)
-        // boss2-boss1 접합: boss2 우측 = boss1 좌측
-        let b2SkipR = boss1 && b1HasRLeft;
-        let b1SkipL = boss2 && b2HasRRight;
-        // 양쪽 다 R 없는 경우: boss2(작은쪽)가 스킵
-        if (boss1 && boss2 && !b2SkipR && !b1SkipL) {
-          b2SkipR = true;
-        }
+        bossesGoRight = (side === 'left');  // edge left → [기어]─[boss]─[축] (보스가 오른쪽)
+      }
 
-        if (boss2 && boss2.outerDiam > 0 && boss2.thickness > 0) {
-          const b2X = gLeft - b1Thick - b2Thick;
-          const adjL = secR;
-          const adjR = boss1R > 0 ? boss1R : gearOuterR;
-          renderBoss(boss2, b2X, b2Thick, adjL, adjR, cg.confidence, false, b2SkipR, 'section', boss1 ? 'boss' : 'gear');
-        }
-        if (boss1 && boss1.outerDiam > 0 && boss1.thickness > 0) {
-          const b1X = gLeft - b1Thick;
-          const adjL = (boss2 && boss2.outerDiam > 0) ? boss2R : secR;
-          const adjR = gearOuterR;
-          renderBoss(boss1, b1X, b1Thick, adjL, adjR, cg.confidence, b1SkipL, false, boss2 ? 'boss' : 'section', 'gear');
+      // 축/구간 끝 반지름 (보스 체인의 끝에 인접하는 요소)
+      const endSecR = bossesGoRight
+        ? (isBetween ? secRightR : secR)
+        : (isBetween ? secLeftR : secR);
+
+      // 각 보스를 순서대로 렌더 (boss[0]=기어 인접, boss[N-1]=축 인접)
+      if (bossList.length > 0) {
+        const N = bossList.length;
+        for (let bi = 0; bi < N; bi++) {
+          const bd = bossList[bi];
+          if (!bd || bd.outerDiam <= 0 || bd.thickness <= 0) continue;
+          const thisPx = bossThickPx[bi];
+          const thisR = bossRadiusPx[bi];
+
+          // 인접 요소 반지름 결정
+          // 기어쪽 인접 (bi=0이면 기어 본체=이뿌리 반지름, 아니면 이전 보스)
+          // ★ 기어 본체 반지름 = gearOuterR - gToothH (이뿌리까지)
+          //   외경(gearOuterR)이 아닌 본체(rootY)까지만 보스 단차를 그려야
+          //   사다리꼴 영역에 불필요한 직선이 생기지 않음
+          const gearBodyR = gearOuterR - gToothH;
+          const adjGearSide = (bi === 0) ? gearBodyR : (bossRadiusPx[bi - 1] || gearBodyR);
+          // 축쪽 인접 (bi=N-1이면 축/구간, 아니면 다음 보스)
+          const adjSecSide = (bi === N - 1) ? endSecR : (bossRadiusPx[bi + 1] || endSecR);
+
+          // 인접 요소 타입
+          const adjTypeGear = (bi === 0) ? 'gear' : 'boss';
+          const adjTypeSec = (bi === N - 1) ? 'section' : 'boss';
+
+          // X 위치 계산 (누적 offset)
+          let bx;
+          if (bossesGoRight) {
+            // [기어]─[boss0]─[boss1]─...  보스가 기어 오른쪽
+            let offset = 0;
+            for (let j = 0; j < bi; j++) offset += bossThickPx[j];
+            bx = gRight + offset;
+          } else {
+            // ...─[boss1]─[boss0]─[기어]  보스가 기어 왼쪽
+            let offset = 0;
+            for (let j = 0; j <= bi; j++) offset += bossThickPx[j];
+            bx = gLeft - offset;
+          }
+
+          // R값 skip 판정 — 인접 보스 간 중복 단차 방지
+          // ★ v134 수정: skip은 인접 보스가 해당 경계의 R필렛을 이미 렌더링할 때만 적용
+          //   이전 코드는 자기 자신의 R(hasRLeft/hasRRight)도 skip 조건에 포함시켜서
+          //   자기가 그려야 할 R값 필렛까지 건너뛰는 버그 발생
+          let skipL = false, skipR = false;
+          if (bossesGoRight) {
+            // adjL = 기어쪽, adjR = 축쪽
+            // 보스↔보스 경계: 이전 보스의 오른쪽 R이 이 경계를 처리하면 이 보스 왼쪽 skip
+            if (bi > 0) {
+              const prevBd = bossList[bi - 1];
+              const prevHasR = prevBd?.fillet?.value > 0 && (prevBd.fillet.side === 'both' || prevBd.fillet.side === 'right');
+              if (prevHasR) skipL = true;
+            }
+            // 다음 보스의 왼쪽 R이 이 경계를 처리하면 이 보스 오른쪽 skip
+            if (bi < N - 1) {
+              const nextBd = bossList[bi + 1];
+              const nextHasR = nextBd?.fillet?.value > 0 && (nextBd.fillet.side === 'both' || nextBd.fillet.side === 'left');
+              if (nextHasR) skipR = true;
+            }
+            renderBoss(bd, bx, thisPx, adjGearSide, adjSecSide, cg.confidence, skipL, skipR, adjTypeGear, adjTypeSec);
+          } else {
+            // adjL = 축쪽, adjR = 기어쪽 (왼쪽 방향이므로 좌우 반전)
+            if (bi > 0) {
+              const prevBd = bossList[bi - 1];
+              const prevHasR = prevBd?.fillet?.value > 0 && (prevBd.fillet.side === 'both' || prevBd.fillet.side === 'left');
+              if (prevHasR) skipR = true;
+            }
+            if (bi < N - 1) {
+              const nextBd = bossList[bi + 1];
+              const nextHasR = nextBd?.fillet?.value > 0 && (nextBd.fillet.side === 'both' || nextBd.fillet.side === 'right');
+              if (nextHasR) skipL = true;
+            }
+            renderBoss(bd, bx, thisPx, adjSecSide, adjGearSide, cg.confidence, skipL, skipR, adjTypeSec, adjTypeGear);
+          }
         }
       }
 
       // ── 기어 치수 지시선 ──
       // ★ 보스가 모두 축쪽에 있으므로 fullLeft/Right 재계산
-      const fullLeftX = (side === 'left') ? gLeft : gLeft - totalBossThick;
-      const fullRightX = (side === 'left') ? gRight + totalBossThick : gRight;
+      let fullLeftX, fullRightX;
+      if (isBetween) {
+        if (side === 'left') {
+          // bossDirection='left': [boss]─[기어]
+          fullLeftX = gLeft - totalBossThick;
+          fullRightX = gRight;
+        } else {
+          // bossDirection='right': [기어]─[boss]
+          fullLeftX = gLeft;
+          fullRightX = gRight + totalBossThick;
+        }
+      } else {
+        fullLeftX = (side === 'left') ? gLeft : gLeft - totalBossThick;
+        fullRightX = (side === 'left') ? gRight + totalBossThick : gRight;
+      }
       const cgMidX = (fullLeftX + fullRightX) / 2;
-      const cgElbowX = cgMidX + (side === 'left' ? -30 : 30);
+      const cgElbowX = cgMidX + (isBetween ? 0 : (side === 'left' ? -30 : 30));
       const cgElbowY = gBotY + 15;
       const cgArrowX = cgMidX;
       const cgArrowY = gBotY;
@@ -2910,6 +3381,9 @@ const AIEngine = (() => {
       doc.elements.push(cgText);
 
       // ── 2) 보조투상도: 톱니 형상 ──
+      // ★ auxView 플래그로 보조투상도 생성 여부 결정 (기본값: edge이면 true, between이면 false)
+      const drawAuxView = (cg.auxView !== undefined) ? cg.auxView : !isBetween;
+      if (drawAuxView) {
       // 규칙: 외경(이끝원) = 등분점(dot)만 표시, 원 자체 삭제
       //        이뿌리원 = 실선 원, 보어원 = 실선 원
       const pitch = RS_PITCH_MAP[cg.chainSpec] || 9.525;
@@ -3042,8 +3516,172 @@ const AIEngine = (() => {
       auxText._auxViewId = `AUX_CG${cgIdx}`;
       doc.elements.push(auxText);
 
-      console.log(`[AI-Engine] CHAIN GEAR ${cg.id}: ${cg.chainSpec} PT${cg.teeth}, outerDiam=${cg.outerDiam}, side=${side}, bosses=${bossList.length}, rendered at gearX=${gearX.toFixed(1)}, auxCx=${auxCx.toFixed(1)}`);
+      } // end if (drawAuxView) — 보조투상도 체크박스에 의한 조건
+
+      console.log(`[AI-Engine] CHAIN GEAR ${cg.id}: ${cg.chainSpec} PT${cg.teeth}, outerDiam=${cg.outerDiam}, placement=${isBetween ? 'between' : 'edge'}, side=${side}, bosses=${bossList.length}, rendered at gearX=${gearX.toFixed(1)}`);
     });
+
+    // ──── 9.5. 기하공차 + 데이텀 (GD&T) — 데모용 자동 생성 ────
+    //
+    // spec에 geometricTolerances / datums 배열이 있으면 렌더링
+    // 없으면 생략 (사용자가 편집기에서 직접 추가 가능)
+    //
+    if (spec.geometricTolerances && spec.geometricTolerances.length > 0) {
+      spec.geometricTolerances.forEach(gt => {
+        // 부착 대상 section 찾기
+        const targetSec = sections.find(s => s.id === gt.section);
+        if (!targetSec) return;
+
+        let gdtX, gdtY, leaderX, leaderY, leaderSide;
+        const secMidX = targetSec.x + targetSec.w / 2;
+
+        // ★ v32: 치수선에 수평으로 지시선을 연결해서 공차값을 표시
+        //   모든 면에서 공차 박스를 우측에 배치하고 수평 지시선으로 연결
+        if (gt.face === 'top') {
+          // 상단면 → 면의 우측 끝에서 수평으로 공차 박스 연결
+          const faceY = oy - targetSec.r;
+          gdtX = targetSec.x + targetSec.w + 12;
+          gdtY = faceY - 4;
+          leaderX = targetSec.x + targetSec.w;
+          leaderY = faceY;
+          leaderSide = 'left';  // 박스 좌측에서 수평 연결
+        } else if (gt.face === 'left') {
+          // 좌측면 → 좌측으로 수평 연결
+          gdtX = targetSec.x - 48;
+          gdtY = oy - 4;
+          leaderX = targetSec.x;
+          leaderY = oy;
+          leaderSide = 'right';
+        } else if (gt.face === 'right') {
+          // 우측면 → 우측으로 수평 연결
+          gdtX = targetSec.x + targetSec.w + 12;
+          gdtY = oy - 4;
+          leaderX = targetSec.x + targetSec.w;
+          leaderY = oy;
+          leaderSide = 'left';
+        } else {
+          // 하단면 → 면의 우측 끝에서 수평으로 공차 박스 연결
+          const faceY = oy + targetSec.r;
+          gdtX = targetSec.x + targetSec.w + 12;
+          gdtY = faceY - 4;
+          leaderX = targetSec.x + targetSec.w;
+          leaderY = faceY;
+          leaderSide = 'left';  // 박스 좌측에서 수평 연결
+        }
+
+        const gdt = DrawingModel.createGeometricTolerance(
+          gdtX, gdtY,
+          gt.symbolType || 'perpendicularity',
+          gt.value || '0.01',
+          gt.datum || null,
+          null, // attachTo — 생성 시 자동 연결하지 않음 (좌표 기반)
+          {
+            leaderSide,
+            stacked: gt.stacked || [],
+            confidence: CONF.CONFIRMED,
+          }
+        );
+        gdt._leaderX = leaderX;
+        gdt._leaderY = leaderY;
+        gdt.confidence = CONF.CONFIRMED;
+        doc.elements.push(gdt);
+      });
+    }
+
+    // ★ v41-fix: 데이텀 기호를 부품 외형선(조립체 포함) 바깥으로 표시
+    //
+    //   원칙: 삼각형 밑변은 해당 면에 닿고, 기호(꼭짓점→줄기→글자상자)는
+    //         부품 본체 반대쪽(바깥)으로 뻗어야 한다.
+    //
+    //   renderer.js side 의미:
+    //     side='left'  → dir=-1 → 기호가 왼쪽으로 연장
+    //     side='right' → dir=+1 → 기호가 오른쪽으로 연장
+    //     side='top'   → dir=-1 → 기호가 위로 연장
+    //     side='bottom'→ dir=+1 → 기호가 아래로 연장
+    //
+    //   face='left'  → 기호를 왼쪽(left)으로: 본체 반대쪽
+    //   face='right' → 기호를 오른쪽(right)으로: 본체 반대쪽
+    //   face='top'   → 기호를 위(top)로: 본체 반대쪽
+    //   face='bottom'→ 기호를 아래(bottom)로: 본체 반대쪽
+    //
+    //   ★ 핵심 수정: face='left'/'right'일 때 datX를 section 경계가 아니라
+    //     체인스프라켓/보스 등 부속물을 포함한 전체 조립체의 최외곽 X로 설정.
+    //     이렇게 해야 삼각형 밑변이 조립체 외형선에 닿고
+    //     기호가 외형선 바깥으로 뻗는다.
+    //
+    if (spec.datums && spec.datums.length > 0) {
+      // ── 체인스프라켓 정보로 각 section의 최외곽 X 범위 계산 ──
+      const cgExtents = {};  // sectionId → { leftmost, rightmost }
+      (spec.chainGears || []).forEach(cg => {
+        const isBetween = cg.placement === 'between';
+        let sec, cgSide;
+        if (isBetween) {
+          // between 체인스프라켓는 section 양쪽 끝을 넘지 않으므로 무시
+          return;
+        }
+        sec = sections.find(s => s.id === cg.section);
+        if (!sec) return;
+        cgSide = cg.side; // 'left' or 'right'
+
+        const cgGearWidthPx = (cg.gearWidth || 8) * PX;
+        const cgBossList = [];
+        if (cg.boss) {
+          const bCount = cg.boss.count || 1;
+          if (cg.boss.bosses && cg.boss.bosses.length > 0) {
+            for (let b = 0; b < bCount; b++) cgBossList.push(cg.boss.bosses[b] || cg.boss.bosses[0]);
+          } else {
+            for (let b = 0; b < bCount; b++) cgBossList.push({ thickness: cg.boss.thickness || 0 });
+          }
+        }
+        const cgTotalBoss = cgBossList.reduce((s, b) => s + (b.thickness > 0 ? b.thickness * PX : 0), 0);
+
+        if (cgSide === 'left') {
+          // [기어]─[boss]─[축S1] → 최좌단 = sec.x - gearWidth - totalBoss
+          const leftmost = sec.x - cgGearWidthPx - cgTotalBoss;
+          if (!cgExtents[sec.id]) cgExtents[sec.id] = { leftmost: sec.x, rightmost: sec.x + sec.w };
+          cgExtents[sec.id].leftmost = Math.min(cgExtents[sec.id].leftmost, leftmost);
+        } else {
+          // [축SN]─[boss]─[기어] → 최우단 = sec.x + sec.w + totalBoss + gearWidth
+          const rightmost = sec.x + sec.w + cgTotalBoss + cgGearWidthPx;
+          if (!cgExtents[sec.id]) cgExtents[sec.id] = { leftmost: sec.x, rightmost: sec.x + sec.w };
+          cgExtents[sec.id].rightmost = Math.max(cgExtents[sec.id].rightmost, rightmost);
+        }
+      });
+
+      spec.datums.forEach(dt => {
+        const targetSec = sections.find(s => s.id === dt.section);
+        if (!targetSec) return;
+
+        const ext = cgExtents[targetSec.id] || null;
+        let datX, datY, datSide;
+
+        if (dt.face === 'left') {
+          // 기호를 왼쪽으로 (부품 바깥)
+          // datX = 조립체 최좌단 (체인스프라켓 포함)
+          datX = ext ? ext.leftmost : targetSec.x;
+          datY = oy;
+          datSide = 'left';
+        } else if (dt.face === 'right') {
+          // 기호를 오른쪽으로 (부품 바깥)
+          // datX = 조립체 최우단 (체인스프라켓 포함)
+          datX = ext ? ext.rightmost : (targetSec.x + targetSec.w);
+          datY = oy;
+          datSide = 'right';
+        } else if (dt.face === 'top') {
+          datX = targetSec.x + targetSec.w / 2;
+          datY = oy - targetSec.r;
+          datSide = 'top';    // 기호를 위로 (부품 바깥)
+        } else {
+          datX = targetSec.x + targetSec.w / 2;
+          datY = oy + targetSec.r;
+          datSide = 'bottom'; // 기호를 아래로 (부품 바깥)
+        }
+
+        const dat = DrawingModel.createDatum(datX, datY, dt.letter || 'A', null, datSide);
+        dat.confidence = CONF.CONFIRMED;
+        doc.elements.push(dat);
+      });
+    }
 
     // ──── 10. Self-check 결과 — v8: 캔버스에 텍스트 대신 doc._selfCheck에 저장 ────
     // (이전: SVG 텍스트로 도면 위에 직접 표시 → 표제란 침범 문제)
@@ -3090,8 +3728,10 @@ const AIEngine = (() => {
     const formData = new FormData();
     formData.append('image', file);
 
+    const _sid = localStorage.getItem('ad_session') || '';
     const response = await fetch('/api/analyze', {
       method: 'POST',
+      headers: { 'X-Session-Id': _sid },
       body: formData,
     });
 
@@ -3221,10 +3861,10 @@ const AIEngine = (() => {
 
     const h = 60;
     [
-      DrawingModel.createOutline(ox, oy - h/2, ox + w, oy - h/2, 2),
-      DrawingModel.createOutline(ox, oy + h/2, ox + w, oy + h/2, 2),
-      DrawingModel.createOutline(ox, oy - h/2, ox, oy + h/2, 2),
-      DrawingModel.createOutline(ox + w, oy - h/2, ox + w, oy + h/2, 2),
+      DrawingModel.createOutline(ox, oy - h/2, ox + w, oy - h/2, 1),
+      DrawingModel.createOutline(ox, oy + h/2, ox + w, oy + h/2, 1),
+      DrawingModel.createOutline(ox, oy - h/2, ox, oy + h/2, 1),
+      DrawingModel.createOutline(ox + w, oy - h/2, ox + w, oy + h/2, 1),
     ].forEach(el => {
       el.confidence = CONF.ESTIMATED;
       doc.elements.push(el);
@@ -3283,16 +3923,20 @@ const AIEngine = (() => {
     geometrySpec: {
       sections: [
         { id: 'S1', length: 50,  lengthConf: CONF.CONFIRMED, diameter: 20, diameterConf: CONF.CONFIRMED, note: null },
-        { id: 'S2', length: 111, lengthConf: CONF.CONFIRMED, diameter: 35, diameterConf: CONF.CONFIRMED, note: null },
-        { id: 'S3', length: 59,  lengthConf: CONF.CONFIRMED, diameter: 20, diameterConf: CONF.CONFIRMED, note: null },
+        { id: 'S2', length: 80,  lengthConf: CONF.CONFIRMED, diameter: 35, diameterConf: CONF.CONFIRMED, note: null },
+        // ── CG2: S2~S3 사이 (between, bossDirection=left) ──
+        { id: 'S3', length: 60,  lengthConf: CONF.CONFIRMED, diameter: 40, diameterConf: CONF.CONFIRMED, note: null },
+        // ── CG3: S3~S4 사이 (between, bossDirection=right) ──
+        { id: 'S4', length: 80,  lengthConf: CONF.CONFIRMED, diameter: 35, diameterConf: CONF.CONFIRMED, note: null },
+        { id: 'S5', length: 50,  lengthConf: CONF.CONFIRMED, diameter: 20, diameterConf: CONF.CONFIRMED, note: null },
       ],
-      totalLength: 220,
+      totalLength: 320,
       totalLengthConf: CONF.CONFIRMED,
       holes: [],
       slots: [],
       chamferPositions: [
         { section: 'S1', side: 'left',  confidence: CONF.ESTIMATED },
-        { section: 'S3', side: 'right', confidence: CONF.ESTIMATED },
+        { section: 'S5', side: 'right', confidence: CONF.ESTIMATED },
       ],
       centerHolePositions: [
         { side: 'left',  confidence: CONF.UNCERTAIN },
@@ -3321,16 +3965,16 @@ const AIEngine = (() => {
           side: 'left',       // 좌측 끝면에서 시작
           confidence: CONF.CONFIRMED,
         },
-        // 블록3: S3 M10 TAP (우측 끝면→30mm 깊이)
+        // 블록3: S5 M10 TAP (우측 끝면→30mm 깊이)
         {
-          id: 'HF3', section: 'S3', type: 'tap-bore',
+          id: 'HF3', section: 'S5', type: 'tap-bore',
           diameter: 10, depth: 30,
           side: 'right',
           confidence: CONF.CONFIRMED,
         },
-        // 블록4: S3 키홈 (깊이3.5mm, 가로40mm, 세로6mm)
+        // 블록4: S5 키홈 (깊이3.5mm, 가로40mm, 세로6mm)
         {
-          id: 'HF4', section: 'S3', type: 'keyway',
+          id: 'HF4', section: 'S5', type: 'keyway',
           keywayWidth: 40,
           keywayHeight: 6,
           keywayDepth: 3.5,
@@ -3352,12 +3996,12 @@ const AIEngine = (() => {
       paperSize: 'A3',
       chamferSpecs: [
         { section: 'S1', side: 'left',  spec: null, specConf: CONF.UNCERTAIN },
-        { section: 'S3', side: 'right', spec: null, specConf: CONF.UNCERTAIN },
+        { section: 'S5', side: 'right', spec: null, specConf: CONF.UNCERTAIN },
       ],
       keywaySpecs: [],
       tapSpecs: [
         { holeId: 'HF1', section: 'S1', spec: 'M10 TAP 깊이30', specConf: CONF.CONFIRMED },
-        { holeId: 'HF3', section: 'S3', spec: 'M10 TAP 깊이30', specConf: CONF.CONFIRMED },
+        { holeId: 'HF3', section: 'S5', spec: 'M10 TAP 깊이30', specConf: CONF.CONFIRMED },
       ],
       centerHoleDiameters: [
         { side: 'left',  diameter: null, diamConf: CONF.UNCERTAIN },
@@ -3388,16 +4032,31 @@ const AIEngine = (() => {
           { axis: 'horizontal', value: 40, confidence: CONF.CONFIRMED },
           { axis: 'vertical',   value: 6,  confidence: CONF.CONFIRMED },
         ],
-        relatedSection: 'S3',
+        relatedSection: 'S5',
         projectionLines: true,
       },
     ],
+    // v32: 기하공차 — 공차값 1개만 표시 (사용자 요청)
+    geometricTolerances: [
+      // S2 상단면에 직각도 공차 (데이텀 A 기준) — 1개만
+      { section: 'S2', face: 'top', symbolType: 'perpendicularity', value: '0.003', datum: 'A' },
+    ],
+    datums: [
+      // S1 좌측면에 데이텀 A
+      { section: 'S1', face: 'left', letter: 'A' },
+      // S5 우측면에 데이텀 B
+      { section: 'S5', face: 'right', letter: 'B' },
+    ],
     uncertainElements: [],
     _reviewRequired: true,
-    // v26: 체인기어 — S1 좌측에 RS35 PT9 체인기어
+    // v26: 체인스프라켓 — S1 좌측에 RS35 PT9 체인스프라켓 (edge 배치)
+    // v27: placement='between' 추가 — 구간 사이 배치 (보조투상도 없음)
+    // v28: CG3 추가 — S3~S4 사이, bossDirection='right' (보스가 우측, R값 좌측)
     chainGears: [
+      // ── edge 배치: 축 끝(S1 좌측)에 체인스프라켓 ──
       {
         id: 'CG1',
+        placement: 'edge',   // 'edge' = 축 끝 배치 (기본값, 생략 가능)
         section: 'S1',
         side: 'left',
         chainSpec: 'RS35',
@@ -3409,8 +4068,52 @@ const AIEngine = (() => {
         boss: {
           count: 2,
           bosses: [
-            { outerDiam: 26, thickness: 15, fillet: { value: 2, side: 'left' } },
+            { outerDiam: 26, thickness: 15, fillet: { value: 2, side: 'both' } },
             { outerDiam: 22, thickness: 5,  fillet: null },
+          ],
+        },
+        confidence: CONF.CONFIRMED,
+      },
+      // ── between 배치 1: S2~S3 사이에 체인스프라켓 (보스 왼쪽) ──
+      // 사용자 도면: 구간2~3 사이, 왼쪽으로 보스(오른쪽으로 R값 적용)
+      {
+        id: 'CG2',
+        placement: 'between',       // 구간 사이 배치
+        sectionLeft: 'S2',          // 좌측 인접 구간
+        sectionRight: 'S3',         // 우측 인접 구간
+        bossDirection: 'left',      // 보스가 왼쪽(S2 쪽)으로 돌출, R값은 오른쪽
+        chainSpec: 'RS40',
+        teeth: 12,
+        outerDiam: 60,
+        boreDiam: 30,
+        gearWidth: 10,
+        key: { width: 8, depth: 4 },
+        boss: {
+          count: 1,
+          bosses: [
+            { outerDiam: 45, thickness: 25, fillet: { value: 3, side: 'right' } },
+          ],
+        },
+        confidence: CONF.CONFIRMED,
+      },
+      // ── between 배치 2: S3~S4 사이에 체인스프라켓 (보스 오른쪽) ──
+      // 사용자 도면: 구간3~4 사이, 오른쪽으로 보스(왼쪽으로 R값 적용)
+      {
+        id: 'CG3',
+        placement: 'between',       // 구간 사이 배치
+        sectionLeft: 'S3',          // 좌측 인접 구간
+        sectionRight: 'S4',         // 우측 인접 구간
+        bossDirection: 'right',     // 보스가 오른쪽(S4 쪽)으로 돌출, R값은 왼쪽
+        chainSpec: 'RS40',
+        teeth: 12,
+        outerDiam: 55,
+        boreDiam: 28,
+        gearWidth: 10,
+        key: { width: 8, depth: 4 },
+        boss: {
+          count: 1,
+          bosses: [
+            { outerDiam: 40, thickness: 20, fillet: { value: 3, side: 'left' } },
           ],
         },
         confidence: CONF.CONFIRMED,

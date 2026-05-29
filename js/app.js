@@ -24,12 +24,34 @@ const App = (() => {
 
   // ========== Init ==========
   function init() {
+    // ★ v43-fix: 테스트 더미 데이터 일회성 정리
+    // localStorage에 테스트 ID(tp1~tp6)만 남아있으면 제거 후 서버에서 복구
+    try {
+      const _raw = localStorage.getItem(DB_KEY);
+      if (_raw) {
+        const _arr = JSON.parse(_raw);
+        const _dummyIds = ['tp1','tp2','tp3','tp4','tp5','tp6'];
+        const _hasDummy = _arr.some(p => _dummyIds.includes(p.id));
+        if (_hasDummy) {
+          // 더미가 아닌 진짜 프로젝트만 남기기
+          const _real = _arr.filter(p => !_dummyIds.includes(p.id));
+          if (_real.length > 0) {
+            localStorage.setItem(DB_KEY, JSON.stringify(_real));
+          } else {
+            localStorage.removeItem(DB_KEY); // 전부 더미면 비워서 서버 복구 유도
+          }
+          console.log('[DB] 테스트 더미 데이터 정리 완료');
+        }
+      }
+    } catch(e) { /* ignore */ }
+
     bindTabEvents();
     bindUploadEvents();
     bindHeaderEvents();
     bindExportEvents();
     bindDBEvents();
     bindSaveDraftEvents();
+    bind3DPreviewEvents();  // v121: 3D 미리보기
     updateDBBadge();
     goToStep(1);
     showToast('AutoDrawing에 오신 것을 환영합니다! 도면 유형을 선택하세요.', 'info');
@@ -282,6 +304,9 @@ const App = (() => {
     showAnnotationPanel(doc);
     showNotePanel(doc);
 
+    // 접기/펼치기 토글 초기화
+    initCollapsibleHeaders();
+
     setTimeout(() => Editor.fitToView(), 100);
   }
 
@@ -295,7 +320,7 @@ const App = (() => {
     const layerColors = {
       outlines: '#000000', centerlines: '#f87171', dimensions: '#60a5fa',
       texts: '#94a3b8', holes: '#a78bfa', slots: '#fbbf24', hatching: '#475569',
-      hiddenlines: '#4ade80',
+      hiddenlines: '#4ade80', surfacefinish: '#f472b6', annotations: '#f59e0b',
     };
 
     Object.entries(doc.layers).forEach(([key, layer]) => {
@@ -496,7 +521,10 @@ const App = (() => {
     const remVal = meta.remarks || '';
 
     panel.innerHTML = `
-      <h4>편집 정보 <span style="font-size:9px;color:#f59e0b;font-weight:normal;">v7 KS</span></h4>
+      <h4 class="collapsible-header" data-target="annotationBody">
+        편집 정보 <span style="font-size:9px;color:#f59e0b;font-weight:normal;">v7 KS</span>
+        <i class="fas fa-chevron-down collapsible-arrow"></i>
+      </h4>
       ${doc._spec ? `
       <div style="margin-bottom:10px;">
         <button id="btnEditParams" style="
@@ -509,42 +537,44 @@ const App = (() => {
         </button>
       </div>
       ` : ''}
-      <div class="form-row">
-        <span class="form-label">품명</span>
-        <input type="text" class="form-input annotation-input" id="annPartName"
-          value="${pn === '직접입력' ? '' : escapeHtml(pn)}" placeholder="품명 입력">
-      </div>
-      <div class="form-row">
-        <span class="form-label">재질</span>
-        <input type="text" class="form-input annotation-input" id="annMaterial"
-          value="${escapeHtml(mat)}" placeholder="예: S45C">
-      </div>
-      <div class="form-row">
-        <span class="form-label">척도</span>
-        <input type="text" class="form-input annotation-input" id="annScale"
-          value="${escapeHtml(scaleVal)}" placeholder="1:1">
-      </div>
-      <div class="form-row">
-        <span class="form-label">각법</span>
-        <select class="form-input annotation-input" id="annProjection">
-          <option value="3각법" ${projVal === '3각법' ? 'selected' : ''}>3각법</option>
-          <option value="1각법" ${projVal === '1각법' ? 'selected' : ''}>1각법</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <span class="form-label">수량</span>
-        <input type="text" class="form-input annotation-input" id="annQuantity"
-          value="${escapeHtml(qtyVal)}" placeholder="수량">
-      </div>
-      <div class="form-row">
-        <span class="form-label">비고</span>
-        <input type="text" class="form-input annotation-input" id="annRemarks"
-          value="${escapeHtml(remVal)}" placeholder="비고">
-      </div>
-      <div class="form-row">
-        <span class="form-label">표면거칠기</span>
-        <input type="text" class="form-input annotation-input" id="annSurfaceFinish"
-          value="${escapeHtml(sf)}" placeholder="예: Ra 1.6">
+      <div class="collapsible-body" id="annotationBody">
+        <div class="form-row">
+          <span class="form-label">품명</span>
+          <input type="text" class="form-input annotation-input" id="annPartName"
+            value="${pn === '직접입력' ? '' : escapeHtml(pn)}" placeholder="품명 입력">
+        </div>
+        <div class="form-row">
+          <span class="form-label">재질</span>
+          <input type="text" class="form-input annotation-input" id="annMaterial"
+            value="${escapeHtml(mat)}" placeholder="예: S45C">
+        </div>
+        <div class="form-row">
+          <span class="form-label">척도</span>
+          <input type="text" class="form-input annotation-input" id="annScale"
+            value="${escapeHtml(scaleVal)}" placeholder="1:1">
+        </div>
+        <div class="form-row">
+          <span class="form-label">각법</span>
+          <select class="form-input annotation-input" id="annProjection">
+            <option value="3각법" ${projVal === '3각법' ? 'selected' : ''}>3각법</option>
+            <option value="1각법" ${projVal === '1각법' ? 'selected' : ''}>1각법</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <span class="form-label">수량</span>
+          <input type="text" class="form-input annotation-input" id="annQuantity"
+            value="${escapeHtml(qtyVal)}" placeholder="수량">
+        </div>
+        <div class="form-row">
+          <span class="form-label">비고</span>
+          <input type="text" class="form-input annotation-input" id="annRemarks"
+            value="${escapeHtml(remVal)}" placeholder="비고">
+        </div>
+        <div class="form-row">
+          <span class="form-label">표면거칠기</span>
+          <input type="text" class="form-input annotation-input" id="annSurfaceFinish"
+            value="${escapeHtml(sf)}" placeholder="예: Ra 1.6">
+        </div>
       </div>
     `;
 
@@ -568,6 +598,34 @@ const App = (() => {
         if (id === 'annSurfaceFinish') doc.meta.surfaceFinish = el.value;
         doc.meta.updatedAt = new Date().toISOString();
         showToast('속성이 업데이트되었습니다', 'success');
+      });
+    });
+  }
+
+  /**
+   * 접기/펼치기 토글 초기화 — 레이어, 편집정보 패널 헤더 클릭 시 본문 숨김/표시
+   */
+  function initCollapsibleHeaders() {
+    document.querySelectorAll('.collapsible-header').forEach(header => {
+      // 이미 바인딩된 경우 중복 방지
+      if (header._collapsibleBound) return;
+      header._collapsibleBound = true;
+
+      header.addEventListener('click', () => {
+        const targetId = header.getAttribute('data-target');
+        const body = document.getElementById(targetId);
+        if (!body) return;
+
+        const isCollapsed = body.classList.contains('collapsed');
+        if (isCollapsed) {
+          // 펼치기
+          body.classList.remove('collapsed');
+          header.classList.remove('collapsed');
+        } else {
+          // 접기
+          body.classList.add('collapsed');
+          header.classList.add('collapsed');
+        }
       });
     });
   }
@@ -940,6 +998,62 @@ const App = (() => {
   }
 
   // ========== DB (프로젝트 열람) ==========
+
+  // ── v43: 퍼지 검색 점수 함수 ──
+  // query와 name을 비교하여 0~1 사이의 유사도 점수를 반환한다.
+  // 높을수록 유사하며, 0이면 전혀 일치하지 않음.
+  function _fuzzyScore(query, name) {
+    if (!query) return 1; // 검색어 없으면 전부 표시
+    const q = query.toLowerCase().trim();
+    const n = name.toLowerCase();
+    if (!q) return 1;
+
+    // 1) 정확히 포함(contains) → 높은 점수
+    if (n === q) return 1.0;
+    if (n.startsWith(q)) return 0.9;
+    if (n.includes(q)) return 0.8;
+
+    // 2) 각 단어(공백 기준)가 포함되는지
+    const qWords = q.split(/\s+/).filter(Boolean);
+    if (qWords.length > 1) {
+      const matchedWords = qWords.filter(w => n.includes(w));
+      if (matchedWords.length === qWords.length) return 0.75;
+      if (matchedWords.length > 0) return 0.4 + 0.3 * (matchedWords.length / qWords.length);
+    }
+
+    // 3) 부분 문자열 순서 매칭 (subsequence)
+    let qi = 0;
+    let consecutive = 0, maxConsecutive = 0;
+    for (let ni = 0; ni < n.length && qi < q.length; ni++) {
+      if (n[ni] === q[qi]) {
+        qi++;
+        consecutive++;
+        maxConsecutive = Math.max(maxConsecutive, consecutive);
+      } else {
+        consecutive = 0;
+      }
+    }
+    if (qi === q.length) {
+      // 전부 순서 매칭됨 — 연속 매칭 비율로 점수
+      return 0.3 + 0.3 * (maxConsecutive / q.length);
+    }
+
+    // 4) 매칭 실패
+    return 0;
+  }
+
+  // ── v43: 검색어에 해당하는 텍스트를 <mark>로 강조 ──
+  function _highlightMatch(name, query) {
+    if (!query || !query.trim()) return escapeHtml(name);
+    const escaped = escapeHtml(name);
+    const q = query.trim();
+    // 대소문자 무시하여 검색어를 찾아 <mark>로 감싸기
+    const regex = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    return escaped.replace(regex, '<mark>$1</mark>');
+  }
+
+  let _dbSearchTimer = null; // 디바운스 타이머
+
   function bindDBEvents() {
     document.getElementById('btnDBTab').addEventListener('click', () => {
       openDBScreen();
@@ -947,6 +1061,35 @@ const App = (() => {
 
     document.getElementById('btnDBBack').addEventListener('click', () => {
       closeDBScreen();
+    });
+
+    // ── v43: 검색 이벤트 ──
+    const searchInput = document.getElementById('dbSearchInput');
+    const searchClear = document.getElementById('dbSearchClear');
+
+    searchInput.addEventListener('input', () => {
+      clearTimeout(_dbSearchTimer);
+      _dbSearchTimer = setTimeout(() => {
+        renderDBGrid(searchInput.value);
+      }, 200); // 200ms 디바운스
+      // clear 버튼 표시/숨김
+      searchClear.style.display = searchInput.value ? '' : 'none';
+    });
+
+    searchClear.addEventListener('click', () => {
+      searchInput.value = '';
+      searchClear.style.display = 'none';
+      renderDBGrid();
+      searchInput.focus();
+    });
+
+    // Enter 키로 즉시 검색
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        searchInput.value = '';
+        searchClear.style.display = 'none';
+        renderDBGrid();
+      }
     });
   }
 
@@ -958,6 +1101,13 @@ const App = (() => {
       s.style.removeProperty('display'); // ★ inline style 잔여물 제거
     });
     document.getElementById('screenDB').classList.add('active');
+
+    // ★ v43: 검색 상태 초기화
+    const searchInput = document.getElementById('dbSearchInput');
+    const searchClear = document.getElementById('dbSearchClear');
+    if (searchInput) { searchInput.value = ''; }
+    if (searchClear) { searchClear.style.display = 'none'; }
+
     renderDBGrid();
   }
 
@@ -966,38 +1116,80 @@ const App = (() => {
     goToStep(_previousStep);
   }
 
-  function renderDBGrid() {
+  function renderDBGrid(searchQuery) {
     const projects = loadProjects();
     const grid = document.getElementById('dbGrid');
     const empty = document.getElementById('dbEmpty');
+    const noResults = document.getElementById('dbNoResults');
+    const scrollWrapper = document.getElementById('dbScrollWrapper');
     const countEl = document.getElementById('dbCount');
+    const query = (searchQuery || '').trim();
 
     countEl.textContent = projects.length + '개';
 
     if (projects.length === 0) {
       empty.style.display = '';
-      grid.style.display = 'none';
+      if (noResults) noResults.style.display = 'none';
+      grid.innerHTML = '';
+      scrollWrapper.style.display = 'none';
+      return;
+    }
+
+    // ── v43: 검색 점수 계산 + 필터 + 정렬 ──
+    let scored = projects.map(proj => ({
+      proj,
+      score: _fuzzyScore(query, proj.name || '')
+    }));
+
+    // 검색어가 있으면 점수 0인 것은 제외
+    if (query) {
+      scored = scored.filter(s => s.score > 0);
+    }
+
+    // 검색 결과 없음 처리
+    if (scored.length === 0) {
+      empty.style.display = 'none';
+      if (noResults) noResults.style.display = '';
+      grid.innerHTML = '';
+      scrollWrapper.style.display = 'none';
       return;
     }
 
     empty.style.display = 'none';
-    grid.style.display = '';
+    if (noResults) noResults.style.display = 'none';
+    scrollWrapper.style.display = '';
 
-    // 최신순 정렬
-    const sorted = [...projects].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    // 정렬: 검색어가 있으면 점수 높은 순, 같으면 최신순
+    //        검색어가 없으면 최신순
+    if (query) {
+      scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return new Date(b.proj.updatedAt) - new Date(a.proj.updatedAt);
+      });
+    } else {
+      scored.sort((a, b) => new Date(b.proj.updatedAt) - new Date(a.proj.updatedAt));
+    }
 
-    grid.innerHTML = sorted.map(proj => {
+    // 최고 점수 (1등 강조용)
+    const topScore = scored.length > 0 ? scored[0].score : 0;
+
+    grid.innerHTML = scored.map((item, idx) => {
+      const proj = item.proj;
       const date = new Date(proj.updatedAt);
       const dateStr = `${date.getFullYear()}.${String(date.getMonth()+1).padStart(2,'0')}.${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
       const elCount = proj.elementCount || 0;
 
+      // 검색어가 있을 때 이름에 하이라이트 + 1등 카드 강조
+      const nameHtml = query ? _highlightMatch(proj.name, query) : escapeHtml(proj.name);
+      const topClass = (query && idx === 0 && topScore > 0) ? ' search-top-match' : '';
+
       return `
-        <div class="db-project-card" data-project-id="${proj.id}">
+        <div class="db-project-card${topClass}" data-project-id="${proj.id}">
           <div class="db-card-preview">
             ${proj.svgPreview ? proj.svgPreview : '<i class="fas fa-drafting-compass preview-placeholder"></i>'}
           </div>
           <div class="db-card-body">
-            <div class="db-card-name" title="${escapeHtml(proj.name)}">${escapeHtml(proj.name)}</div>
+            <div class="db-card-name" title="${escapeHtml(proj.name)}">${nameHtml}</div>
             <div class="db-card-meta">
               <span><i class="fas fa-clock"></i> ${dateStr}</span>
               <span><i class="fas fa-object-group"></i> ${elCount}개 요소</span>
@@ -1056,6 +1248,9 @@ const App = (() => {
         openProject(card.dataset.projectId);
       });
     });
+
+    // ★ v43: 검색 시 스크롤을 맨 왼쪽으로 리셋
+    if (scrollWrapper) scrollWrapper.scrollLeft = 0;
   }
 
   function openProject(id) {
@@ -1292,9 +1487,10 @@ const App = (() => {
         copy.svgPreview = ''; // 서버 저장 시 미리보기 제외 (용량 절약)
         return copy;
       });
+      const sid = localStorage.getItem('ad_session') || '';
       fetch('/api/projects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sid },
         body: JSON.stringify({ projects: lightweight }),
       }).then(r => {
         if (!r.ok) console.warn('[DB] Server sync failed:', r.status);
@@ -1321,7 +1517,10 @@ const App = (() => {
 
     // localStorage가 비어있으면 서버에서 복구 시도
     try {
-      const res = await fetch('/api/projects');
+      const sid = localStorage.getItem('ad_session') || '';
+      const res = await fetch('/api/projects', {
+        headers: { 'X-Session-Id': sid },
+      });
       if (!res.ok) return;
       const data = await res.json();
       if (data.success && data.projects && data.projects.length > 0) {
@@ -1382,6 +1581,20 @@ const App = (() => {
         _exportTargetDoc = null;
         modal.classList.remove('active');
       });
+    });
+  }
+
+  // ========== 3D 미리보기 (v121) ==========
+  function bind3DPreviewEvents() {
+    const btn = document.getElementById('btn3dPreview');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const doc = Editor.getDocument ? Editor.getDocument() : _document;
+      if (!doc || !doc._spec) {
+        showToast('3D 미리보기를 위한 도면 데이터가 없습니다', 'error');
+        return;
+      }
+      Preview3D.open(doc._spec);
     });
   }
 

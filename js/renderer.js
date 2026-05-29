@@ -28,6 +28,9 @@ const Renderer = (() => {
   let svg, drawingLayer;
   let groups = {};
 
+  // ★ v41-fix: 데이텀 렌더링 시 부품 외형선 바운딩박스 중심 (render() 에서 미리 계산)
+  let _partCenter = null;   // { cx, cy } or null
+
   function init(svgElement) {
     svg = svgElement;
     // svg.getElementById may not work in all contexts; fallback to querySelector
@@ -101,7 +104,7 @@ const Renderer = (() => {
     // hatching → outlines → hiddenlines (숨은선이 외형선 위에)
     const layerOrder = [
       'hatching', 'outlines', 'hiddenlines', 'centerlines',
-      'holes', 'slots', 'dimensions', 'texts', 'titleblocks', 'selection'
+      'holes', 'slots', 'dimensions', 'surfacefinish', 'annotations', 'texts', 'titleblocks', 'selection'
     ];
 
     layerOrder.forEach(name => {
@@ -130,8 +133,54 @@ const Renderer = (() => {
     clearAll();
     ensureGroups();
     if (!doc || !doc.elements) return;
+
+    // ★ v34: 기하공차 중복 제거 — attachTo 기반 + 좌표 기반 이중 필터
+    //   (1) 같은 attachTo에 대해 마지막 것만 렌더링
+    //   (2) attachTo=null이어도 같은 좌표+기호+값이면 마지막 것만 렌더링
+    const gdtByAttach = {};
+    const gdtByCoord = {};
+    doc.elements.forEach(el => {
+      if (el.type === 'geotolerance') {
+        if (el.attachTo) {
+          gdtByAttach[el.attachTo] = el.id;
+        }
+        // 좌표+기호+값 기반 키 (소수점 반올림하여 근접 좌표도 동일 취급)
+        const coordKey = `${Math.round(el.x)}_${Math.round(el.y)}_${el.symbolType}_${el.value}`;
+        gdtByCoord[coordKey] = el.id;  // 마지막 것이 승리
+      }
+    });
+    const skipGdtIds = new Set();
+    doc.elements.forEach(el => {
+      if (el.type === 'geotolerance') {
+        // attachTo 기반 중복
+        if (el.attachTo && gdtByAttach[el.attachTo] !== el.id) {
+          skipGdtIds.add(el.id);
+        }
+        // 좌표 기반 중복
+        const coordKey = `${Math.round(el.x)}_${Math.round(el.y)}_${el.symbolType}_${el.value}`;
+        if (gdtByCoord[coordKey] !== el.id) {
+          skipGdtIds.add(el.id);
+        }
+      }
+    });
+
+    // ★ v41-fix: 데이텀 방향 자동 보정용 — 부품 외형선 바운딩박스 중심 미리 계산
+    _partCenter = null;
+    const _outlines = doc.elements.filter(e => e.type === 'outline');
+    if (_outlines.length > 0) {
+      let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity;
+      _outlines.forEach(o => {
+        mnX = Math.min(mnX, o.x1, o.x2);
+        mnY = Math.min(mnY, o.y1, o.y2);
+        mxX = Math.max(mxX, o.x1, o.x2);
+        mxY = Math.max(mxY, o.y1, o.y2);
+      });
+      _partCenter = { cx: (mnX + mxX) / 2, cy: (mnY + mxY) / 2 };
+    }
+
     doc.elements.forEach(el => {
       if (doc.layers[el.layer] && !doc.layers[el.layer].visible) return;
+      if (skipGdtIds.has(el.id)) return;  // 중복 GDT 건너뛰기
       try {
         renderElement(el);
       } catch(e) {
@@ -160,8 +209,12 @@ const Renderer = (() => {
       case 'dimension':  svgEl = renderDimension(el); break;
       case 'text':       svgEl = renderText(el); break;
       case 'titleblock': svgEl = renderTitleBlock(el); break;
-      case 'noteblock':  svgEl = renderNoteBlock(el); break;
-      case 'paperBg':    svgEl = renderPaperBg(el); break;
+      case 'noteblock':     svgEl = renderNoteBlock(el); break;
+      case 'surfacefinish':  svgEl = renderSurfaceFinish(el); break;
+      case 'geotolerance':   svgEl = renderGeoTolerance(el); break;
+      case 'datum':          svgEl = renderDatum(el); break;
+      case 'breakLine':      svgEl = renderBreakLine(el); break;
+      case 'paperBg':        svgEl = renderPaperBg(el); break;
     }
 
     if (svgEl) {
@@ -217,7 +270,8 @@ const Renderer = (() => {
       const d = `M ${el.x1} ${el.y1} A ${r} ${r} 0 0 ${sweep} ${el.x2} ${el.y2}`;
       path.setAttribute('d', d);
       path.setAttribute('stroke', el.color || '#000000');
-      path.setAttribute('stroke-width', el.thickness || 2);
+      // ★ v38: 도면 윤곽선 두께 1로 통일
+      path.setAttribute('stroke-width', 1);
       path.setAttribute('stroke-linecap', 'round');
       path.setAttribute('fill', 'none');
       g.appendChild(path);
@@ -226,7 +280,7 @@ const Renderer = (() => {
       const hit = createSvgElement('path');
       hit.setAttribute('d', d);
       hit.setAttribute('stroke', 'transparent');
-      hit.setAttribute('stroke-width', Math.max((el.thickness || 2) + 8, 12));
+      hit.setAttribute('stroke-width', 12);
       hit.setAttribute('fill', 'none');
       hit.style.cursor = 'pointer';
       g.appendChild(hit);
@@ -240,7 +294,8 @@ const Renderer = (() => {
     line.setAttribute('x2', el.x2);
     line.setAttribute('y2', el.y2);
     line.setAttribute('stroke', el.color || '#000000');
-    line.setAttribute('stroke-width', el.thickness || 2);
+    // ★ v38: 도면 윤곽선 두께 1로 통일
+    line.setAttribute('stroke-width', 1);
     line.setAttribute('stroke-linecap', 'round');
 
     // visible edge / shoulder edge 태깅 (data 속성)
@@ -266,9 +321,64 @@ const Renderer = (() => {
     hit.setAttribute('x2', el.x2);
     hit.setAttribute('y2', el.y2);
     hit.setAttribute('stroke', 'transparent');
-    hit.setAttribute('stroke-width', Math.max((el.thickness || 2) + 8, 12));
+    hit.setAttribute('stroke-width', 12);
     hit.style.cursor = 'pointer';
     g.appendChild(hit);
+
+    return g;
+  }
+
+  // ========== Break Line (물결 생략선) ==========
+  // 구간 길이 > 1000mm 일 때 중앙에 그리는 S-curve 물결표시
+  // 정면도에서 긴 구간을 시각적으로 축소했음을 나타내는 기호
+  //
+  //   구조:  좌측 흰색 마스크 │ S-curve 물결 │ 우측 흰색 마스크
+  //
+  //   물결선 형태 (상단→하단):
+  //     시작점(topY) → 우측으로 S곡선 → 좌측으로 S곡선 → 끝점(botY)
+  //     (손그림 스케치의 물결표시와 동일한 형태)
+  //
+  function renderBreakLine(el) {
+    const g = createSvgElement('g');
+    const cx = el.x;          // 물결선 중심 X
+    const topY = el.topY;     // 상단 (외형선 위쪽)
+    const botY = el.botY;     // 하단 (외형선 아래쪽)
+    const halfW = (el.gapW || 6) / 2; // 물결 진폭 (좌우)
+    const totalH = botY - topY;
+
+    // ── 1) 흰색 마스크: 물결 영역의 기존 외형선을 지움 ──
+    const mask = createSvgElement('rect');
+    mask.setAttribute('x', cx - halfW - 1);
+    mask.setAttribute('y', topY - 0.5);
+    mask.setAttribute('width', halfW * 2 + 2);
+    mask.setAttribute('height', totalH + 1);
+    mask.setAttribute('fill', '#ffffff');
+    mask.setAttribute('stroke', 'none');
+    g.appendChild(mask);
+
+    // ── 2) S-curve 물결선 (2개 — 약간 좌우 오프셋) ──
+    // 물결선 형태: 상단에서 하단까지 2~3개의 S-곡선이 연결된 형태
+    // SVG cubic bezier를 사용하여 자연스러운 S-curve 구현
+    const waveCount = 3; // S-curve 반복 수
+    const segH = totalH / (waveCount * 2); // 각 반곡선 높이
+
+    for (let offset = -0.8; offset <= 0.8; offset += 1.6) {
+      let d = `M ${cx + offset} ${topY}`;
+      for (let i = 0; i < waveCount * 2; i++) {
+        const y0 = topY + i * segH;
+        const y1 = y0 + segH;
+        const dir = (i % 2 === 0) ? 1 : -1;
+        const cpx = cx + offset + dir * halfW;
+        d += ` Q ${cpx} ${(y0 + y1) / 2} ${cx + offset} ${y1}`;
+      }
+      const path = createSvgElement('path');
+      path.setAttribute('d', d);
+      path.setAttribute('stroke', el.color || '#000000');
+      path.setAttribute('stroke-width', el.thickness || 1);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke-linecap', 'round');
+      g.appendChild(path);
+    }
 
     return g;
   }
@@ -395,19 +505,72 @@ const Renderer = (() => {
   function renderSlot(el) {
     const g = createSvgElement('g');
     const rx = el.height / 2;
+    const slotShape = el.slotShape || 'obround';  // v117: 키 형상 ('obround' | 'one-side-round' | 'rect')
+    const stroke = el.color || '#fbbf24';
 
-    // 장공 외곽 (둥근 사각형)
-    const rect = createSvgElement('rect');
-    rect.setAttribute('x', el.x);
-    rect.setAttribute('y', el.y);
-    rect.setAttribute('width', el.width);
-    rect.setAttribute('height', el.height);
-    rect.setAttribute('rx', rx);
-    rect.setAttribute('ry', rx);
-    rect.setAttribute('fill', 'none');
-    rect.setAttribute('stroke', el.color || '#fbbf24');
-    rect.setAttribute('stroke-width', 1.5);
-    g.appendChild(rect);
+    // v118: 외형선 두께를 다른 outline과 동일하게 (1.5 → 1.0)
+    const sw = el.strokeWidth || 1;
+
+    if (slotShape === 'one-side-round') {
+      // ★ v117+v118: 한쪽 둥근형 — slotRoundSide에 따라 둥근 쪽 결정
+      const roundSide = el.slotRoundSide || 'right';
+      const x = el.x, y = el.y, w = el.width, h = el.height;
+      const r = h / 2;
+      let d;
+      if (roundSide === 'left') {
+        // 왼쪽 반원 + 오른쪽 직각
+        const arcEndX = x + r;
+        d = [
+          `M ${x + w} ${y}`,           // 오른쪽 상단
+          `L ${arcEndX} ${y}`,          // → 왼쪽 상단 (반원 시작)
+          `A ${r} ${r} 0 0 0 ${arcEndX} ${y + h}`,  // 왼쪽 반원 (반시계방향)
+          `L ${x + w} ${y + h}`,        // → 오른쪽 하단
+          `Z`
+        ].join(' ');
+      } else {
+        // 왼쪽 직각 + 오른쪽 반원 (기존)
+        const arcStartX = x + w - r;
+        d = [
+          `M ${x} ${y}`,
+          `L ${arcStartX} ${y}`,
+          `A ${r} ${r} 0 0 1 ${arcStartX} ${y + h}`,
+          `L ${x} ${y + h}`,
+          `Z`
+        ].join(' ');
+      }
+      const path = createSvgElement('path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', stroke);
+      path.setAttribute('stroke-width', sw);
+      g.appendChild(path);
+    } else if (slotShape === 'rect') {
+      // ★ v117: 양쪽 네모형 — 직각 사각형
+      const rect = createSvgElement('rect');
+      rect.setAttribute('x', el.x);
+      rect.setAttribute('y', el.y);
+      rect.setAttribute('width', el.width);
+      rect.setAttribute('height', el.height);
+      rect.setAttribute('rx', 0);
+      rect.setAttribute('ry', 0);
+      rect.setAttribute('fill', 'none');
+      rect.setAttribute('stroke', stroke);
+      rect.setAttribute('stroke-width', sw);
+      g.appendChild(rect);
+    } else {
+      // 양쪽 둥근형 (obround) — 기존 동작
+      const rect = createSvgElement('rect');
+      rect.setAttribute('x', el.x);
+      rect.setAttribute('y', el.y);
+      rect.setAttribute('width', el.width);
+      rect.setAttribute('height', el.height);
+      rect.setAttribute('rx', rx);
+      rect.setAttribute('ry', rx);
+      rect.setAttribute('fill', 'none');
+      rect.setAttribute('stroke', stroke);
+      rect.setAttribute('stroke-width', sw);
+      g.appendChild(rect);
+    }
 
     // 중심선 (슬롯 내부)
     const cx = el.x + el.width / 2;
@@ -417,7 +580,7 @@ const Renderer = (() => {
     clH.setAttribute('y1', cy);
     clH.setAttribute('x2', el.x + el.width - 2);
     clH.setAttribute('y2', cy);
-    clH.setAttribute('stroke', el.color || '#fbbf24');
+    clH.setAttribute('stroke', stroke);
     clH.setAttribute('stroke-width', 0.4);
     clH.setAttribute('stroke-dasharray', '4 2');
     g.appendChild(clH);
@@ -521,7 +684,7 @@ const Renderer = (() => {
     g.setAttribute('class', 'dimension-group');
 
     const isHorizontal = Math.abs(el.y2 - el.y1) < Math.abs(el.x2 - el.x1);
-    const offsetDir = el.offset || 30;
+    const offsetDir = (el.offset != null) ? el.offset : 30;
     const color = el.color || '#60a5fa';
     const fontSize = el.fontSize || 12;
 
@@ -542,22 +705,38 @@ const Renderer = (() => {
     // 좁은 공간 판단: 화살표 마커(각 8px) + 여유
     const isNarrow = dimSpan < textWidth + 20;
 
-    // Extension lines (항상 그린다)
-    const ext1 = createSvgElement('line');
-    ext1.setAttribute('x1', el.x1); ext1.setAttribute('y1', el.y1);
-    ext1.setAttribute('x2', lx1); ext1.setAttribute('y2', ly1);
-    ext1.setAttribute('stroke', color);
-    ext1.setAttribute('stroke-width', 0.5);
-    ext1.setAttribute('stroke-dasharray', '2 2');
-    g.appendChild(ext1);
+    // Extension lines — 지름 치수(dimStyle=diameter)에서는 보조선 생략
+    // ★ v119: 보조선을 실선으로 변경 + 화살표 위로 3mm(≈6px) 연장
+    const isDiamDim = el.dimStyle === 'diameter';
+    if (!isDiamDim) {
+      const EXT_OVERSHOOT = 6; // 화살표 너머 연장 (≈3mm)
+      let ex1x = lx1, ex1y = ly1, ex2x = lx2, ex2y = ly2;
+      if (isHorizontal) {
+        // 수평 치수: 보조선은 수직으로 올라감 → Y방향 추가 연장
+        const dir = (ly1 < el.y1) ? -1 : 1; // 치수선이 위에 있으면 더 위로
+        ex1y = ly1 + dir * EXT_OVERSHOOT;
+        ex2y = ly2 + dir * EXT_OVERSHOOT;
+      } else {
+        // 수직 치수: 보조선은 수평으로 나감 → X방향 추가 연장
+        const dir = (lx1 < el.x1) ? -1 : 1; // 치수선이 왼쪽이면 더 왼쪽으로
+        ex1x = lx1 + dir * EXT_OVERSHOOT;
+        ex2x = lx2 + dir * EXT_OVERSHOOT;
+      }
 
-    const ext2 = createSvgElement('line');
-    ext2.setAttribute('x1', el.x2); ext2.setAttribute('y1', el.y2);
-    ext2.setAttribute('x2', lx2); ext2.setAttribute('y2', ly2);
-    ext2.setAttribute('stroke', color);
-    ext2.setAttribute('stroke-width', 0.5);
-    ext2.setAttribute('stroke-dasharray', '2 2');
-    g.appendChild(ext2);
+      const ext1 = createSvgElement('line');
+      ext1.setAttribute('x1', el.x1); ext1.setAttribute('y1', el.y1);
+      ext1.setAttribute('x2', ex1x); ext1.setAttribute('y2', ex1y);
+      ext1.setAttribute('stroke', color);
+      ext1.setAttribute('stroke-width', 0.5);
+      g.appendChild(ext1);
+
+      const ext2 = createSvgElement('line');
+      ext2.setAttribute('x1', el.x2); ext2.setAttribute('y1', el.y2);
+      ext2.setAttribute('x2', ex2x); ext2.setAttribute('y2', ex2y);
+      ext2.setAttribute('stroke', color);
+      ext2.setAttribute('stroke-width', 0.5);
+      g.appendChild(ext2);
+    }
 
     // ★ 치수선 — 화살표는 항상 안쪽(측정점)을 가리킴
     //   넓든 좁든 동일한 화살표 스타일 (세번째 사진)
@@ -585,6 +764,28 @@ const Renderer = (() => {
     text.setAttribute('font-family', "'JetBrains Mono', monospace");
     text.setAttribute('font-weight', '500');
 
+    // ── v40: 좁은 치수 엘보 지시선 (elbow leader) ──
+    //
+    // 치수선 사이에 텍스트가 들어갈 공간이 부족한 경우:
+    //   1. 치수선 중앙에서 위로 수직선 (elbowRise)
+    //   2. 수직선 끝에서 오른쪽으로 수평선 (shoulder)
+    //   3. 수평선 위에 치수 텍스트 표시
+    //
+    // _narrowLeaderLevel: AI엔진이 인접 좁은 치수에 0,1,2... 레벨 할당
+    //   → 레벨이 높을수록 더 위로 올라가서 텍스트 겹침 방지
+    //
+    //   레벨0:  ─┐ 8.5
+    //   레벨1:  ─┐ 5
+    //            │
+    //   레벨2:  ─┐ 3
+    //            │
+    //            │
+    //   dimLine: ←→←→←→
+    //
+    const ELBOW_BASE_RISE = 10;      // 기본 수직 상승 (px)
+    const ELBOW_LEVEL_STEP = 12;     // 레벨당 추가 상승 (px) — 텍스트 높이 + 여유
+    const ELBOW_SHOULDER = 6;        // 수평 어깨 길이 (px)
+
     if (isHorizontal) {
       if (!isNarrow) {
         // 수평 일반: 치수선 중앙 위
@@ -592,26 +793,51 @@ const Renderer = (() => {
         text.setAttribute('y', midY - 4);
         text.setAttribute('text-anchor', 'middle');
       } else {
-        // 수평 좁은: 오른쪽으로 지시선 연장
-        text.setAttribute('x', lx2 + 4);
-        text.setAttribute('y', midY - 3);
-        text.setAttribute('text-anchor', 'start');
+        // ★ v40: 수평 좁은 → 엘보 지시선
+        //   치수선 중앙 → 위로 수직 → 오른쪽 수평 어깨 → 텍스트
+        const level = el._narrowLeaderLevel || 0;
+        const elbowRise = ELBOW_BASE_RISE + level * ELBOW_LEVEL_STEP;
 
-        const leaderLine = createSvgElement('line');
-        leaderLine.setAttribute('x1', lx2); leaderLine.setAttribute('y1', ly2);
-        leaderLine.setAttribute('x2', lx2 + textWidth + 10); leaderLine.setAttribute('y2', ly2);
-        leaderLine.setAttribute('stroke', color);
-        leaderLine.setAttribute('stroke-width', 0.5);
-        g.appendChild(leaderLine);
+        // 엘보 꼭짓점 좌표
+        const elbowBottomX = midX;
+        const elbowBottomY = midY;     // 치수선 위 (수평이므로 ly1 = ly2 = midY)
+        const elbowTopX = midX;
+        const elbowTopY = midY - elbowRise;
+        const shoulderEndX = midX + ELBOW_SHOULDER + textWidth + 4;
+        const shoulderEndY = elbowTopY;
+
+        // 수직선: 치수선 중앙 → 위
+        const vLine = createSvgElement('line');
+        vLine.setAttribute('x1', elbowBottomX); vLine.setAttribute('y1', elbowBottomY);
+        vLine.setAttribute('x2', elbowTopX);    vLine.setAttribute('y2', elbowTopY);
+        vLine.setAttribute('stroke', color);
+        vLine.setAttribute('stroke-width', 0.5);
+        g.appendChild(vLine);
+
+        // 수평 어깨선: 꼭짓점 → 오른쪽
+        const hLine = createSvgElement('line');
+        hLine.setAttribute('x1', elbowTopX);    hLine.setAttribute('y1', elbowTopY);
+        hLine.setAttribute('x2', shoulderEndX); hLine.setAttribute('y2', shoulderEndY);
+        hLine.setAttribute('stroke', color);
+        hLine.setAttribute('stroke-width', 0.5);
+        g.appendChild(hLine);
+
+        // 텍스트: 어깨선 위
+        text.setAttribute('x', elbowTopX + ELBOW_SHOULDER);
+        text.setAttribute('y', elbowTopY - 2);
+        text.setAttribute('text-anchor', 'start');
       }
     } else {
-      // ★ 수직 치수(직경 등): 치수선 수직 중앙, 오른쪽에 텍스트 배치
-      //   공차(+/-)가 텍스트 오른쪽에 붙으므로, 치수선 왼쪽에 놓으면
-      //   공차가 치수선(보조선)에 가려진다.
-      //   → 텍스트를 치수선 오른쪽에 배치하여 공차가 충분히 보이게 함
-      text.setAttribute('x', midX + 5);
-      text.setAttribute('y', midY + fontSize * 0.35);
-      text.setAttribute('text-anchor', 'start');
+      // ★ v106: 수직 치수(직경 등): 텍스트를 90° 회전하여 치수선에 평행 배치
+      //   치수선 왼쪽에 텍스트를 놓고, bottom→top 방향으로 읽히도록 -90° 회전
+      //   (KS 도면 표준: 수직 치수 텍스트는 치수선에 평행, 왼쪽 배치)
+      text.setAttribute('x', midX);
+      text.setAttribute('y', midY);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('transform', `rotate(-90, ${midX}, ${midY})`);
+      // 회전 후 시각적으로 치수선 왼쪽에 오도록 dx 조정
+      text.setAttribute('dx', 0);
+      text.setAttribute('dy', -4);
     }
 
     text.textContent = textStr;
@@ -638,16 +864,24 @@ const Renderer = (() => {
           tolBaseX = midX + textWidth / 2 + tolGap;
           tolCenterY = (midY - 4) - fontSize * 0.3;
         } else {
-          // 수평 좁은: baseline = midY - 3
-          tolBaseX = lx2 + 4 + textWidth + tolGap;
-          tolCenterY = (midY - 3) - fontSize * 0.3;
+          // ★ v40: 수평 좁은 엘보 — baseline = elbowTopY - 2
+          const lvl = el._narrowLeaderLevel || 0;
+          const eRise = ELBOW_BASE_RISE + lvl * ELBOW_LEVEL_STEP;
+          const eTopY = midY - eRise;
+          tolBaseX = midX + ELBOW_SHOULDER + textWidth + tolGap;
+          tolCenterY = (eTopY - 2) - fontSize * 0.3;
         }
       } else {
-        // 수직: 텍스트가 치수선 오른쪽 (x = midX + 5, text-anchor: start)
-        //   공차 시작 X = 텍스트 시작 + 텍스트폭 + 간격
-        tolBaseX = midX + 5 + textWidth + tolGap;
-        tolCenterY = (midY + fontSize * 0.35) - fontSize * 0.3;
+        // ★ v106: 수직 치수 — 텍스트가 -90° 회전됨
+        //   회전 좌표계 기준으로 공차 배치: 텍스트 우측(시각적 상측) = 회전 전 Y-
+        //   rotate(-90)에서: 원래 +X → 화면 -Y(위), 원래 +Y → 화면 +X(오른쪽)
+        //   tolBaseX: 회전 전 좌표계에서 텍스트 끝 + 간격 (text-anchor=middle이므로 중앙 + 텍스트폭/2)
+        tolBaseX = midX + textWidth / 2 + tolGap;
+        tolCenterY = midY - 4 - fontSize * 0.3;
       }
+
+      // 공차 회전 플래그 — 수직 치수이면 공차도 -90° 회전 필요
+      const tolRotate = !isHorizontal;
 
       // 상한 공차 (+) — 가운데선 바로 위, baseline = tolCenterY (글자가 위로 올라감)
       if (el.toleranceUpper) {
@@ -660,6 +894,7 @@ const Renderer = (() => {
         tolUpper.setAttribute('font-weight', '400');
         tolUpper.setAttribute('text-anchor', 'start');
         tolUpper.setAttribute('dominant-baseline', 'auto'); // baseline 위로 그려짐
+        if (tolRotate) tolUpper.setAttribute('transform', `rotate(-90, ${midX}, ${midY})`);
         const upperVal = el.toleranceUpper.toString();
         tolUpper.textContent = upperVal.startsWith('+') || upperVal.startsWith('-') ? upperVal : `+${upperVal}`;
         g.appendChild(tolUpper);
@@ -676,6 +911,7 @@ const Renderer = (() => {
         tolLower.setAttribute('font-weight', '400');
         tolLower.setAttribute('text-anchor', 'start');
         tolLower.setAttribute('dominant-baseline', 'auto');
+        if (tolRotate) tolLower.setAttribute('transform', `rotate(-90, ${midX}, ${midY})`);
         const lowerVal = el.toleranceLower.toString();
         tolLower.textContent = lowerVal.startsWith('+') || lowerVal.startsWith('-') ? lowerVal : `-${lowerVal}`;
         g.appendChild(tolLower);
@@ -720,17 +956,25 @@ const Renderer = (() => {
         txtHitW = textWidth + 6 + tolExtraW;
         txtHitH = fontSize + 8;
       } else {
-        txtHitX = lx2 + 1;
-        txtHitY = midY - fontSize - 3;
+        // ★ v40: 엘보 지시선 텍스트 히트 영역
+        const lvl2 = el._narrowLeaderLevel || 0;
+        const eRise2 = ELBOW_BASE_RISE + lvl2 * ELBOW_LEVEL_STEP;
+        const eTopY2 = midY - eRise2;
+        txtHitX = midX + ELBOW_SHOULDER - 2;
+        txtHitY = eTopY2 - fontSize - 2;
         txtHitW = textWidth + 6 + tolExtraW;
         txtHitH = fontSize + 8;
       }
     } else {
-      // 수직: 텍스트는 치수선 오른쪽 (x = midX + 5, text-anchor: start)
-      txtHitX = midX + 5 - 2;
-      txtHitY = midY - fontSize * 0.5;
-      txtHitW = textWidth + 6 + tolExtraW;
-      txtHitH = fontSize + 4;
+      // ★ v108: 수직 치수 — 텍스트가 -90° 회전됨 (치수선 왼쪽, 세로 배치)
+      //   회전된 텍스트의 실제 시각적 영역: 치수선 왼쪽에 세로로 긴 직사각형
+      //   텍스트 중심 = (midX, midY), 회전 후:
+      //     시각적 폭 = fontSize (글자 높이가 가로 폭이 됨)
+      //     시각적 높이 = textWidth (글자 폭이 세로 높이가 됨)
+      txtHitX = midX - fontSize - 4;   // 치수선 왼쪽
+      txtHitY = midY - textWidth / 2 - 3;  // 텍스트 세로 중앙 기준
+      txtHitW = fontSize + 8;
+      txtHitH = textWidth + 6 + tolExtraW;
     }
     const txtHitRect = createSvgElement('rect');
     txtHitRect.setAttribute('x', txtHitX);
@@ -958,14 +1202,52 @@ const Renderer = (() => {
     // NAME 라벨 (우상단 모서리)
     txt(xR + CR_LABEL + 2, y0 + 2.5, 'NAME', fs - 1, 'start', '600');
 
-    // 도면명 (큰 글씨, 중앙 정렬)
+    // ★ v38: 도면명 — 글자크기 절반 축소 + 칸 초과 시 2줄 표시
     const nameAreaH = y2 - y0;
-    txt(xR + CR_LABEL + CR_VALUE / 2, y0 + nameAreaH / 2,
-      el.drawingName || '', fs + 2, 'middle', '700');
+    const nameFS = (fs + 2) / 2;               // 기존 fs+2 → 절반 (≈3.25)
+    const nameStr = el.drawingName || '';
+    const nameCenterX = xR + CR_LABEL + CR_VALUE / 2;
+    const namePadding = 4;                      // 좌우 여백
+    const nameAvailW = CR_VALUE - namePadding;  // 실제 사용 가능 폭
+    // 글자폭 추정: 한글≈fontSize*0.85, 영문/숫자≈fontSize*0.55
+    const nameTextW = Array.from(nameStr).reduce(function(sum, ch) {
+      return sum + (/[\u3131-\uD79D]/.test(ch) ? nameFS * 0.85 : nameFS * 0.55);
+    }, 0);
+
+    if (nameTextW <= nameAvailW || nameStr.length === 0) {
+      // 한 줄에 표시
+      const hasSub = !!(el.drawingNameSub);
+      const nameY = hasSub ? y0 + nameAreaH * 0.42 : y0 + nameAreaH / 2;
+      txt(nameCenterX, nameY, nameStr, nameFS, 'middle', '700');
+    } else {
+      // 2줄로 분할: 중간 공백 기준 또는 절반 위치에서 자름
+      var splitIdx = -1;
+      var halfLen = Math.ceil(nameStr.length / 2);
+      // 중간 근처 공백 찾기
+      for (var si = halfLen; si >= halfLen - 5 && si >= 0; si--) {
+        if (nameStr[si] === ' ') { splitIdx = si; break; }
+      }
+      if (splitIdx < 0) {
+        for (var sj = halfLen; sj <= halfLen + 5 && sj < nameStr.length; sj++) {
+          if (nameStr[sj] === ' ') { splitIdx = sj; break; }
+        }
+      }
+      if (splitIdx < 0) splitIdx = halfLen; // 공백 없으면 절반에서 자름
+
+      var line1 = nameStr.substring(0, splitIdx).trim();
+      var line2 = nameStr.substring(splitIdx).trim();
+      var hasSub2 = !!(el.drawingNameSub);
+      var lineGap = nameFS * 1.4;
+      var baseY = hasSub2
+        ? y0 + nameAreaH * 0.32
+        : y0 + nameAreaH / 2 - lineGap / 2;
+      txt(nameCenterX, baseY, line1, nameFS, 'middle', '700');
+      txt(nameCenterX, baseY + lineGap, line2, nameFS, 'middle', '700');
+    }
 
     // for 부제
     if (el.drawingNameSub) {
-      txt(xR + CR_LABEL + CR_VALUE / 2, y0 + nameAreaH * 0.78,
+      txt(nameCenterX, y0 + nameAreaH * 0.82,
         'for  ' + el.drawingNameSub, fs - 0.5, 'middle', '400');
     }
 
@@ -1098,39 +1380,598 @@ const Renderer = (() => {
     return g;
   }
 
+  // ========== Surface Finish Symbol (다듬질 기호 — KS 규격) ==========
+  //
+  //  KS 규격 다듬질 기호:
+  //   독립적인 ▽ (역삼각형) 마크를 **간격을 두고 나란히** 배열
+  //   각 ▽는 독립적으로 분리되어야 함 (W/지그재그처럼 연결되면 안 됨!)
+  //   V의 꼭짓점(tip)이 아래(표면)를 가리키고 열린 쪽이 위
+  //
+  //   ▽ ▽ ▽ ▽  연마 다듬질 (grinding)   — 4개 분리 배열
+  //   ▽ ▽ ▽    정밀 다듬질 (precision)  — 3개 분리 배열
+  //   ▽ ▽      보통 다듬질 (normal)     — 2개 분리 배열
+  //   ▽        거친 다듬질 (rough)      — 1개
+  //   〰       다듬질 안함 (none)       — 물결선
+  //
+  //  크기: V 높이 ≈ 2 SVG 단위 (치수 텍스트(6)의 ~33%)
+  //  핵심: 각 ▽ 사이에 충분한 간격(≥ V 폭의 50%)을 두어
+  //       인접 V가 연결되어 W처럼 보이지 않도록 함
+  //
+  function renderSurfaceFinish(el) {
+    const g = createSvgElement('g');
+    const color = el.color || '#000000';
+    const rot = el.rotation || 0;
+    if (rot !== 0) {
+      g.setAttribute('transform', `rotate(${rot}, ${el.x}, ${el.y})`);
+    }
+
+    const baseX = el.x;
+    const baseY = el.y;
+
+    if (el.grade === 'none') {
+      // 다듬질 안함: KS 규격 물결선(~) 기호
+      const stemH = 2;
+      const stemLine = createSvgElement('line');
+      stemLine.setAttribute('x1', baseX);
+      stemLine.setAttribute('y1', baseY);
+      stemLine.setAttribute('x2', baseX);
+      stemLine.setAttribute('y2', baseY - stemH);
+      stemLine.setAttribute('stroke', color);
+      stemLine.setAttribute('stroke-width', 0.15);
+      g.appendChild(stemLine);
+
+      // 물결선 (wavy line) — 줄기 상단에 수평 물결
+      const wavePath = createSvgElement('path');
+      const waveY = baseY - stemH;
+      const waveW = 1.5;
+      const waveH = 0.4;
+      const d = `M ${baseX - waveW} ${waveY} ` +
+                `c ${waveW * 0.33} ${-waveH} ${waveW * 0.66} ${waveH} ${waveW} 0 ` +
+                `c ${waveW * 0.33} ${-waveH} ${waveW * 0.66} ${waveH} ${waveW} 0`;
+      wavePath.setAttribute('d', d);
+      wavePath.setAttribute('fill', 'none');
+      wavePath.setAttribute('stroke', color);
+      wavePath.setAttribute('stroke-width', 0.15);
+      wavePath.setAttribute('stroke-linecap', 'round');
+      g.appendChild(wavePath);
+
+      // 히트 영역
+      const hitRect = createSvgElement('rect');
+      hitRect.setAttribute('x', baseX - waveW - 2);
+      hitRect.setAttribute('y', baseY - stemH - waveH - 2);
+      hitRect.setAttribute('width', waveW * 2 + 4);
+      hitRect.setAttribute('height', stemH + waveH + 4);
+      hitRect.setAttribute('fill', 'transparent');
+      hitRect.style.cursor = 'pointer';
+      g.appendChild(hitRect);
+
+      return g;
+    }
+
+    const triCount = el.triangles || 1;
+
+    // ── 다듬질 기호: 정삼각형을 뒤집은 역삼각형(▽) ──
+    //  다이얼로그 기호와 동일하게:
+    //  - 정삼각형 비율 (폭 ≈ 높이, 정확히는 높이 = 밑변 × √3/2)
+    //  - 삼각형끼리 서로 붙어있음 (간격 0)
+    //  - 닫힌 삼각형 (상단 수평선 있음)
+    //
+    //  ▽▽  ← 두 역삼각형이 빈틈없이 붙어있는 모양
+    //
+    const TRI_W = 3;                    // 역삼각형 밑변(상단) 전체 폭
+    const TRI_H = TRI_W * 0.866;       // 정삼각형 높이 = 밑변 × √3/2 ≈ 2.6
+    const TRI_GAP = 0;                  // 간격 없음! 삼각형끼리 붙어있음
+    const SW = 0.3;                     // 선 굵기
+
+    const totalW = triCount * TRI_W;    // 간격 0이므로 단순 곱셈
+
+    // baseX 중심 정렬
+    const startX = baseX - totalW / 2;
+
+    // ── 역삼각형 ▽ 나란히 붙여서 배열 ──
+    for (let i = 0; i < triCount; i++) {
+      const lx = startX + i * TRI_W;           // 이 삼각형의 왼쪽 상단 X
+      const rx = lx + TRI_W;                    // 오른쪽 상단 X
+      const cx = lx + TRI_W / 2;               // 중심(꼭짓점) X
+      const topY = baseY - TRI_H;              // 상단 Y
+      const tipY = baseY;                       // 꼭짓점 Y (표면)
+
+      const triPath = createSvgElement('path');
+      // 닫힌 역삼각형: 왼쪽위 → 꼭짓점(아래) → 오른쪽위 → Z(상단선 닫기)
+      const d = `M ${lx} ${topY} L ${cx} ${tipY} L ${rx} ${topY} Z`;
+      triPath.setAttribute('d', d);
+      triPath.setAttribute('fill', 'none');
+      triPath.setAttribute('stroke', color);
+      triPath.setAttribute('stroke-width', SW);
+      triPath.setAttribute('stroke-linejoin', 'miter');
+      g.appendChild(triPath);
+    }
+
+    // 숫자 텍스트 표시하지 않음 (사용자 요청)
+
+    // 히트 영역 (선택용)
+    const hitPad = 2;
+    const hitRect = createSvgElement('rect');
+    hitRect.setAttribute('x', startX - hitPad);
+    hitRect.setAttribute('y', baseY - TRI_H - hitPad);
+    hitRect.setAttribute('width', totalW + hitPad * 2);
+    hitRect.setAttribute('height', TRI_H + hitPad * 2);
+    hitRect.setAttribute('fill', 'transparent');
+    hitRect.style.cursor = 'pointer';
+    g.appendChild(hitRect);
+
+    return g;
+  }
+
+  // ========== Geometric Tolerance (기하공차 기입틀) ==========
+  //
+  // KS B 0608 규격 — 개선판 v33:
+  //
+  //  수정사항 (v33):
+  //  1. 공차값은 1개만 표시 (stacked 제거)
+  //  2. 반드시 치수선에 수평으로 지시선을 연결해서 공차값을 표시
+  //     면/치수선 ─────── ┌───────┬─────────┬───────┐
+  //                       │ 기호  │  수치   │데이텀 │
+  //                       └───────┴─────────┴───────┘
+  //     → 지시선은 순수 수평선만 허용 (수직/대각선 절대 불가)
+  //  3. 화살표는 면(또는 치수선)의 연결점을 가리킴
+  //  4. leaderSide: 'left' = 지시선이 박스 좌측, 'right' = 박스 우측
+  //
+  function renderGeoTolerance(el) {
+    const g = createSvgElement('g');
+    g.setAttribute('data-id', el.id);
+    const color = el.color || '#000000';
+    const SW = 0.4;
+    const CELL_H = 8;
+    const SYM_W = 8;
+    const VAL_W = 20;
+    const DAT_W = 8;
+    const FS = 3.5;
+
+    // ★ v33: 공차값은 1개만 표시
+    const row = { symbolType: el.symbolType, value: el.value, datum: el.datum };
+
+    const baseX = el.x;
+    const baseY = el.y;
+    const leaderSide = (el.leaderSide === 'right') ? 'right' : 'left';
+
+    const hasDatum = row.datum && row.datum.length > 0;
+    const showDatumCell = hasDatum || (el._datumEnabled && !hasDatum);
+    const totalW = SYM_W + VAL_W + (showDatumCell ? DAT_W : 0);
+
+    // ★ v37: 지시선 — 수평 직선 또는 직각 꺾임(엘보)
+    //   수직 치수선의 경우 _leaderElbow = true → 수평 후 수직으로 꺾어서 박스 상단에 연결
+    //   수평 치수선/외형선의 경우 기존처럼 순수 수평 지시선
+    if (el._leaderX != null && el._leaderY != null) {
+      const lx = el._leaderX;
+      const ly = el._leaderY;
+      const ARROW_L = 2.0;
+      const ARROW_W = 0.8;
+
+      if (el._leaderElbow) {
+        // ── 직각 꺾임 (엘보) 지시선 ──
+        // 치수선 끝점(lx, ly)에서 수평으로 나간 뒤 직각으로 꺾어 박스 상단 중앙에 연결
+        const boxTopCenterX = baseX + totalW / 2;
+        const boxTopY = baseY;
+        const elbowX = boxTopCenterX;  // 꺾이는 지점 X = 박스 상단 중심 X
+        const elbowY = ly;             // 꺾이는 지점 Y = 치수선 끝점 Y (수평 구간)
+
+        // 수평 구간: 치수선 끝점 → 꺾이는 지점
+        const hSeg = createSvgElement('line');
+        hSeg.setAttribute('x1', lx);
+        hSeg.setAttribute('y1', ly);
+        hSeg.setAttribute('x2', elbowX);
+        hSeg.setAttribute('y2', elbowY);
+        hSeg.setAttribute('stroke', color);
+        hSeg.setAttribute('stroke-width', SW);
+        g.appendChild(hSeg);
+
+        // 수직 구간: 꺾이는 지점 → 박스 상단 중앙
+        const vSeg = createSvgElement('line');
+        vSeg.setAttribute('x1', elbowX);
+        vSeg.setAttribute('y1', elbowY);
+        vSeg.setAttribute('x2', boxTopCenterX);
+        vSeg.setAttribute('y2', boxTopY);
+        vSeg.setAttribute('stroke', color);
+        vSeg.setAttribute('stroke-width', SW);
+        g.appendChild(vSeg);
+
+        // 화살표: 치수선 끝점을 가리킴 (수평 방향)
+        const arrowDirX = elbowX > lx ? -1 : 1;  // 화살촉은 치수선 방향
+        const ax = lx;
+        const ay = ly;
+        const arrowPath = `M ${ax} ${ay} L ${ax - arrowDirX * ARROW_L} ${ay - ARROW_W} L ${ax - arrowDirX * ARROW_L} ${ay + ARROW_W} Z`;
+        const arrow = createSvgElement('path');
+        arrow.setAttribute('d', arrowPath);
+        arrow.setAttribute('fill', color);
+        arrow.setAttribute('stroke', 'none');
+        g.appendChild(arrow);
+      } else {
+        // ── 순수 수평 지시선 (기존 v33 로직) ──
+        let connX;
+        const connY = baseY + CELL_H / 2;  // 박스 수직 중심
+        if (leaderSide === 'left') {
+          connX = baseX;
+        } else {
+          connX = baseX + totalW;
+        }
+
+        const hLine = createSvgElement('line');
+        hLine.setAttribute('x1', lx);
+        hLine.setAttribute('y1', connY);
+        hLine.setAttribute('x2', connX);
+        hLine.setAttribute('y2', connY);
+        hLine.setAttribute('stroke', color);
+        hLine.setAttribute('stroke-width', SW);
+        g.appendChild(hLine);
+
+        // 화살표 (면 쪽 끝에 삼각형 화살촉)
+        const arrowTipX = lx;
+        const arrowTipY = connY;
+        const arrowDirX = connX > lx ? 1 : -1;
+        const ax = arrowTipX;
+        const ay = arrowTipY;
+        const arrowPath = `M ${ax} ${ay} L ${ax + arrowDirX * ARROW_L} ${ay - ARROW_W} L ${ax + arrowDirX * ARROW_L} ${ay + ARROW_W} Z`;
+        const arrow = createSvgElement('path');
+        arrow.setAttribute('d', arrowPath);
+        arrow.setAttribute('fill', color);
+        arrow.setAttribute('stroke', 'none');
+        g.appendChild(arrow);
+      }
+    }
+
+    // ★ v33: 1행만 렌더링
+    {
+      const ry = baseY;
+
+      // 외곽 사각형
+      const rect = createSvgElement('rect');
+      rect.setAttribute('x', baseX);
+      rect.setAttribute('y', ry);
+      rect.setAttribute('width', totalW);
+      rect.setAttribute('height', CELL_H);
+      rect.setAttribute('fill', 'white');
+      rect.setAttribute('stroke', color);
+      rect.setAttribute('stroke-width', SW);
+      g.appendChild(rect);
+
+      // 기호 칸 | 수치 칸 구분선
+      const sep1 = createSvgElement('line');
+      sep1.setAttribute('x1', baseX + SYM_W);
+      sep1.setAttribute('y1', ry);
+      sep1.setAttribute('x2', baseX + SYM_W);
+      sep1.setAttribute('y2', ry + CELL_H);
+      sep1.setAttribute('stroke', color);
+      sep1.setAttribute('stroke-width', SW);
+      g.appendChild(sep1);
+
+      // 수치 칸 | 데이텀 칸 구분선
+      if (showDatumCell) {
+        const sep2 = createSvgElement('line');
+        sep2.setAttribute('x1', baseX + SYM_W + VAL_W);
+        sep2.setAttribute('y1', ry);
+        sep2.setAttribute('x2', baseX + SYM_W + VAL_W);
+        sep2.setAttribute('y2', ry + CELL_H);
+        sep2.setAttribute('stroke', color);
+        sep2.setAttribute('stroke-width', SW);
+        g.appendChild(sep2);
+      }
+
+      // 기호 텍스트
+      const symInfo = (typeof DrawingModel !== 'undefined' && DrawingModel.GDT_SYMBOLS)
+        ? DrawingModel.GDT_SYMBOLS[row.symbolType] : null;
+      const symChar = symInfo ? symInfo.symbol : '?';
+      const symText = createSvgElement('text');
+      symText.setAttribute('x', baseX + SYM_W / 2);
+      symText.setAttribute('y', ry + CELL_H / 2 + FS * 0.35);
+      symText.setAttribute('text-anchor', 'middle');
+      symText.setAttribute('font-size', FS + 0.5);
+      symText.setAttribute('fill', color);
+      symText.setAttribute('font-family', "'Noto Sans', 'Arial', sans-serif");
+      symText.textContent = symChar;
+      g.appendChild(symText);
+
+      // 수치 텍스트
+      const valText = createSvgElement('text');
+      valText.setAttribute('x', baseX + SYM_W + VAL_W / 2);
+      valText.setAttribute('y', ry + CELL_H / 2 + FS * 0.35);
+      valText.setAttribute('text-anchor', 'middle');
+      valText.setAttribute('font-size', FS);
+      valText.setAttribute('fill', color);
+      valText.setAttribute('font-family', "'JetBrains Mono', monospace");
+      valText.textContent = row.value || '';
+      g.appendChild(valText);
+
+      // 데이텀 텍스트
+      if (showDatumCell) {
+        const datText = createSvgElement('text');
+        datText.setAttribute('x', baseX + SYM_W + VAL_W + DAT_W / 2);
+        datText.setAttribute('y', ry + CELL_H / 2 + FS * 0.35);
+        datText.setAttribute('text-anchor', 'middle');
+        datText.setAttribute('font-size', FS);
+        datText.setAttribute('fill', hasDatum ? color : '#999999');
+        datText.setAttribute('font-weight', '600');
+        datText.setAttribute('font-family', "'JetBrains Mono', monospace");
+        datText.textContent = hasDatum ? row.datum : '—';
+        g.appendChild(datText);
+      }
+    }
+
+    // 히트 영역
+    const maxW = SYM_W + VAL_W + DAT_W;
+    const hitRect = createSvgElement('rect');
+    hitRect.setAttribute('x', baseX - 2);
+    hitRect.setAttribute('y', baseY - 2);
+    hitRect.setAttribute('width', maxW + 4);
+    hitRect.setAttribute('height', CELL_H + 4);
+    hitRect.setAttribute('fill', 'transparent');
+    hitRect.style.cursor = 'pointer';
+    g.appendChild(hitRect);
+
+    return g;
+  }
+
+  /**
+   * 인라인 데이텀 기호 — v33 사용하지 않음
+   */
+  function _renderInlineDatum(g, cx, topY, letter, color, sw, position) {
+    // no-op
+  }
+
+  // ========== Datum Feature Symbol (데이텀 기호) ==========
+  //
+  // KS B 0608 규격 — 개선판 v33:
+  //
+  //  ★ 수정사항 (v33):
+  //    1. 역삼각형의 윗부분(밑변 = 평평한 면)이 반드시 지시한 면에 닿아야 한다
+  //    2. 수치입력박스(글자 상자)는 면에서 수직 방향으로 배치 (면에서 멀어지는 쪽)
+  //
+  //    (bx,by) = 삼각형 밑변 중심 = 면 위 접촉점
+  //
+  //    side='bottom' (면이 위, 기호가 아래로):
+  //      ════════════  ← 면 (datum face)
+  //         ▽         ← 역삼각형: 밑변(━)이 면에 닿음, 꼭짓점이 아래
+  //         │         ← 줄기
+  //       ┌───┐
+  //       │ A │       ← 글자 상자
+  //       └───┘
+  //
+  //    side='top' (면이 아래, 기호가 위로):
+  //       ┌───┐
+  //       │ A │
+  //       └───┘
+  //         │
+  //         △         ← 역삼각형: 밑변이 아래(면에 닿음), 꼭짓점이 위
+  //      ════════════  ← 면
+  //
+  function renderDatum(el) {
+    const g = createSvgElement('g');
+    g.setAttribute('data-id', el.id);
+    const color = el.color || '#000000';
+    const SW = 0.4;
+    const TRI_SIZE = 4;
+    const STEM_H = 3;
+    const BOX_SIZE = 6;
+    const FS = 4;
+
+    let bx = el.x;   // 삼각형 밑변 중심 X (면 위 접촉점)
+    let by = el.y;    // 삼각형 밑변 중심 Y (면 위 접촉점)
+    // ★ v41-fix: 데이텀 방향 자동 보정 — 저장된 side 값이 잘못되어도 렌더링 시 올바르게 교정
+    //   부품 외형선 바운딩박스 중심 기준으로:
+    //   좌변(el.x < cx) → 'left'(왼쪽으로 확장), 우변(el.x >= cx) → 'right'(오른쪽으로 확장)
+    //   윗변(el.y < cy) → 'top'(위쪽으로 확장),  아랫변(el.y >= cy) → 'bottom'(아래쪽으로 확장)
+    let side = el.side || 'bottom';
+    if (_partCenter) {
+      const rawSide = el.side || 'bottom';
+      if (rawSide === 'left' || rawSide === 'right') {
+        // 수직면 — X 좌표로 좌/우 판정
+        side = el.x < _partCenter.cx ? 'left' : 'right';
+      } else {
+        // 수평면 — Y 좌표로 상/하 판정
+        side = el.y < _partCenter.cy ? 'top' : 'bottom';
+      }
+    }
+
+    // 좁은 면 처리
+    if (el._narrowFace) {
+      const extOffset = 14;
+      const EXT_DASH = '4 1 0.5 1';
+      if ((side === 'bottom' || side === 'top') && el._extLineEndX != null) {
+        bx = el._extLineEndX + extOffset;
+        const extLine = createSvgElement('line');
+        extLine.setAttribute('x1', el._extLineEndX);
+        extLine.setAttribute('y1', by);
+        extLine.setAttribute('x2', bx);
+        extLine.setAttribute('y2', by);
+        extLine.setAttribute('stroke', color);
+        extLine.setAttribute('stroke-width', SW * 0.7);
+        extLine.setAttribute('stroke-dasharray', EXT_DASH);
+        g.appendChild(extLine);
+      } else if ((side === 'left' || side === 'right') && el._extLineEndY != null) {
+        by = el._extLineEndY + extOffset;
+        const extLine = createSvgElement('line');
+        extLine.setAttribute('x1', bx);
+        extLine.setAttribute('y1', el._extLineEndY);
+        extLine.setAttribute('x2', bx);
+        extLine.setAttribute('y2', by);
+        extLine.setAttribute('stroke', color);
+        extLine.setAttribute('stroke-width', SW * 0.7);
+        extLine.setAttribute('stroke-dasharray', EXT_DASH);
+        g.appendChild(extLine);
+      }
+    }
+
+    // ★ v33: 역삼각형 — 밑변(평평한 면)이 면에 닿고, 꼭짓점이 면에서 멀어짐
+    //   (bx,by) = 면 위의 삼각형 밑변 중심
+    //   dir = 면에서 멀어지는 방향 (+1=아래, -1=위)
+    let triPath, stemX1, stemY1, stemX2, stemY2, boxCx, boxCy;
+    const triH = TRI_SIZE * 0.866;
+
+    if (side === 'bottom' || side === 'top') {
+      // bottom: 면이 위에 있고, 기호가 아래로 뻗음 (dir=+1)
+      // top:    면이 아래에 있고, 기호가 위로 뻗음 (dir=-1)
+      const dir = side === 'bottom' ? 1 : -1;
+
+      // 역삼각형: 밑변 좌(-TRI/2), 밑변 우(+TRI/2) → 꼭짓점(면에서 멀어짐)
+      triPath = `M ${bx - TRI_SIZE/2} ${by} L ${bx + TRI_SIZE/2} ${by} L ${bx} ${by + dir * triH} Z`;
+
+      stemX1 = bx; stemY1 = by + dir * triH;
+      stemX2 = bx; stemY2 = by + dir * (triH + STEM_H);
+      boxCx = bx;  boxCy = by + dir * (triH + STEM_H + BOX_SIZE / 2);
+    } else {
+      // left:  면이 오른쪽, 기호가 왼쪽으로 뻗음 (dir=-1)
+      // right: 면이 왼쪽, 기호가 오른쪽으로 뻗음 (dir=+1)
+      const dir = side === 'left' ? -1 : 1;
+
+      triPath = `M ${bx} ${by - TRI_SIZE/2} L ${bx} ${by + TRI_SIZE/2} L ${bx + dir * triH} ${by} Z`;
+
+      stemX1 = bx + dir * triH; stemY1 = by;
+      stemX2 = bx + dir * (triH + STEM_H); stemY2 = by;
+      boxCx = bx + dir * (triH + STEM_H + BOX_SIZE / 2); boxCy = by;
+    }
+
+    // 속 채움 역삼각형 (밑변이 면에 닿음)
+    const tri = createSvgElement('path');
+    tri.setAttribute('d', triPath);
+    tri.setAttribute('fill', color);
+    tri.setAttribute('stroke', color);
+    tri.setAttribute('stroke-width', SW);
+    g.appendChild(tri);
+
+    // 줄기
+    const stem = createSvgElement('line');
+    stem.setAttribute('x1', stemX1);
+    stem.setAttribute('y1', stemY1);
+    stem.setAttribute('x2', stemX2);
+    stem.setAttribute('y2', stemY2);
+    stem.setAttribute('stroke', color);
+    stem.setAttribute('stroke-width', SW);
+    g.appendChild(stem);
+
+    // 글자 상자
+    const box = createSvgElement('rect');
+    box.setAttribute('x', boxCx - BOX_SIZE / 2);
+    box.setAttribute('y', boxCy - BOX_SIZE / 2);
+    box.setAttribute('width', BOX_SIZE);
+    box.setAttribute('height', BOX_SIZE);
+    box.setAttribute('fill', 'white');
+    box.setAttribute('stroke', color);
+    box.setAttribute('stroke-width', SW);
+    g.appendChild(box);
+
+    // 문자
+    const letter = createSvgElement('text');
+    letter.setAttribute('x', boxCx);
+    letter.setAttribute('y', boxCy + FS * 0.35);
+    letter.setAttribute('text-anchor', 'middle');
+    letter.setAttribute('font-size', FS);
+    letter.setAttribute('fill', color);
+    letter.setAttribute('font-weight', '600');
+    letter.setAttribute('font-family', "'JetBrains Mono', monospace");
+    letter.textContent = el.letter || 'A';
+    g.appendChild(letter);
+
+    // 히트 영역
+    const hitRect = createSvgElement('rect');
+    hitRect.setAttribute('x', Math.min(bx, boxCx) - BOX_SIZE);
+    hitRect.setAttribute('y', Math.min(by, boxCy) - BOX_SIZE);
+    hitRect.setAttribute('width', Math.abs(boxCx - bx) + BOX_SIZE * 2);
+    hitRect.setAttribute('height', Math.abs(boxCy - by) + BOX_SIZE * 2);
+    hitRect.setAttribute('fill', 'transparent');
+    hitRect.style.cursor = 'pointer';
+    g.appendChild(hitRect);
+
+    return g;
+  }
+
   // ========== Selection Highlight ==========
-  function showSelection(element) {
+  // ★ v35: 선택 박스 — 회색 점선, 꼭짓점 핸들 제거, 점선 크기 30%, 5mm 오프셋
+  //   1. 회색 점선 (파란색 → 회색), 꼭짓점 네모 핸들 없음
+  //   2. 점선 패턴 30% 축소 (dash 1.2, gap 0.9)
+  //   3. 면 선택 → 면이 박스 중앙, 치수 선택 → 치수선이 박스 중앙
+  //   4. 박스 크기 = 선택 요소 바운드 + 오프셋 5mm (≈5px)
+  // ★ v110: groupElements 인자 추가 — 그룹 요소 배열이 전달되면 union 바운드 계산
+  function showSelection(element, groupElements) {
     clearSelection();
     if (!element) return;
 
-    const bounds = DrawingModel.getElementBounds(element);
-    const pad = 6;
+    const OFFSET = 5;  // 5mm offset
 
+    // ── v110: 단일 요소 바운드 계산 헬퍼 ──
+    function _calcElementBounds(el) {
+      let ex, ey, ew, eh;
+      if (el.type === 'outline' || el.type === 'hiddenline' || el.type === 'centerline') {
+        const x1 = Math.min(el.x1, el.x2);
+        const y1 = Math.min(el.y1, el.y2);
+        const x2 = Math.max(el.x1, el.x2);
+        const y2 = Math.max(el.y1, el.y2);
+        ew = (x2 - x1) || 1;
+        eh = (y2 - y1) || 1;
+        ex = x1;
+        ey = y1;
+      } else if (el.type === 'dimension') {
+        const x1 = Math.min(el.x1, el.x2);
+        const y1 = Math.min(el.y1, el.y2);
+        const x2 = Math.max(el.x1, el.x2);
+        const y2 = Math.max(el.y1, el.y2);
+        const isH = Math.abs(el.y2 - el.y1) < Math.abs(el.x2 - el.x1);
+        if (isH) {
+          const dimLineY = y1 - ((el.offset != null) ? el.offset : 30);
+          ex = x1; ey = dimLineY;
+          ew = (x2 - x1) || 10; eh = 1;
+        } else {
+          const dimLineX = x1 - ((el.offset != null) ? el.offset : 30);
+          ex = dimLineX; ey = y1;
+          ew = 1; eh = (y2 - y1) || 10;
+        }
+      } else if (el.type === 'text') {
+        // 텍스트: x,y 기준 + fontSize로 추정 바운드
+        const fs = el.fontSize || 5;
+        const textStr = el.text || '';
+        const approxW = textStr.length * fs * 0.6;
+        ex = el.x;
+        ey = el.y - fs;
+        ew = approxW || 10;
+        eh = fs * 1.2;
+      } else {
+        const bounds = DrawingModel.getElementBounds(el);
+        ex = bounds.x; ey = bounds.y;
+        ew = bounds.width; eh = bounds.height;
+      }
+      return { x: ex, y: ey, w: ew, h: eh };
+    }
+
+    let bx, by, bw, bh;
+
+    // ── v110: 그룹 선택 — 모든 그룹 요소의 union 바운드 계산 ──
+    if (groupElements && groupElements.length > 1) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      groupElements.forEach(function(gel) {
+        const b = _calcElementBounds(gel);
+        minX = Math.min(minX, b.x);
+        minY = Math.min(minY, b.y);
+        maxX = Math.max(maxX, b.x + b.w);
+        maxY = Math.max(maxY, b.y + b.h);
+      });
+      bx = minX;
+      by = minY;
+      bw = (maxX - minX) || 1;
+      bh = (maxY - minY) || 1;
+    } else {
+      // 단일 요소 선택 (기존 로직)
+      const sb = _calcElementBounds(element);
+      bx = sb.x; by = sb.y; bw = sb.w; bh = sb.h;
+    }
+
+    // ── 선택 박스: 바운드 + 5mm 오프셋 ──
     const rect = createSvgElement('rect');
-    rect.setAttribute('x', bounds.x - pad);
-    rect.setAttribute('y', bounds.y - pad);
-    rect.setAttribute('width', bounds.width + pad * 2);
-    rect.setAttribute('height', bounds.height + pad * 2);
+    rect.setAttribute('x', bx - OFFSET);
+    rect.setAttribute('y', by - OFFSET);
+    rect.setAttribute('width', bw + OFFSET * 2);
+    rect.setAttribute('height', bh + OFFSET * 2);
     rect.setAttribute('class', 'selection-box');
     groups.selection.appendChild(rect);
-
-    const handleSize = 6;
-    const corners = [
-      { x: bounds.x - pad, y: bounds.y - pad },
-      { x: bounds.x + bounds.width + pad, y: bounds.y - pad },
-      { x: bounds.x - pad, y: bounds.y + bounds.height + pad },
-      { x: bounds.x + bounds.width + pad, y: bounds.y + bounds.height + pad },
-    ];
-    corners.forEach(c => {
-      const handle = createSvgElement('rect');
-      handle.setAttribute('x', c.x - handleSize / 2);
-      handle.setAttribute('y', c.y - handleSize / 2);
-      handle.setAttribute('width', handleSize);
-      handle.setAttribute('height', handleSize);
-      handle.setAttribute('class', 'selection-handle');
-      handle.setAttribute('rx', '1');
-      groups.selection.appendChild(handle);
-    });
+    // ★ v35: 꼭짓점 핸들 제거 — 점선 네모만 표시
   }
 
   // ========== Dynamic Layer Counts ==========
@@ -1192,18 +2033,7 @@ const Renderer = (() => {
       }
     });
 
-    // ── 📝 편집 힌트 아이콘 (작은 연필) ──
-    const bounds = el.id ? DrawingModel.getElementBounds(el) : null;
-    if (bounds && bounds.width > 0) {
-      const editIcon = createSvgElement('text');
-      editIcon.setAttribute('x', bounds.x + bounds.width + 4);
-      editIcon.setAttribute('y', bounds.y + 10);
-      editIcon.setAttribute('fill', '#f59e0b');
-      editIcon.setAttribute('font-size', 10);
-      editIcon.setAttribute('opacity', '0.7');
-      editIcon.textContent = '✏️';
-      svgGroup.appendChild(editIcon);
-    }
+    // ★ v36: 연필 아이콘 제거 — 클릭 영역 방해 및 시각적 노이즈 제거
   }
 
   // ========== v5: Confidence 시각화 (non-placeholder) ==========

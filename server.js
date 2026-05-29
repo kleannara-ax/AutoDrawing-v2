@@ -56,64 +56,23 @@ const upload = multer({
 // ── JSON body parsing ──
 app.use(express.json({ limit: '50mb' }));
 
-// ── 정적 파일 ──
-app.use(express.static(__dirname));
+// ── 인증 시스템 설정 (라우팅보다 먼저) ──
+const { setupAuthRoutes } = require('./auth-server');
+const { requireAuth, getSession } = setupAuthRoutes(app);
 
-// ── 서버 측 프로젝트 영구 저장소 ──
-// localStorage는 도메인/세션에 종속되므로, 서버 측 JSON 파일로 백업
-const PROJECTS_FILE = path.join(__dirname, 'data', 'projects.json');
-
-function ensureDataDir() {
-  const dir = path.dirname(PROJECTS_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-function loadServerProjects() {
-  ensureDataDir();
-  try {
-    if (fs.existsSync(PROJECTS_FILE)) {
-      return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8'));
-    }
-  } catch (e) {
-    console.error('[DB] Failed to load projects:', e.message);
-  }
-  return [];
-}
-
-function saveServerProjects(projects) {
-  ensureDataDir();
-  try {
-    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects), 'utf8');
-    return true;
-  } catch (e) {
-    console.error('[DB] Failed to save projects:', e.message);
-    return false;
-  }
-}
-
-// GET /api/projects — 서버에 저장된 프로젝트 목록 반환
-app.get('/api/projects', (req, res) => {
-  const projects = loadServerProjects();
-  console.log(`[DB] GET /api/projects → ${projects.length}개 프로젝트`);
-  res.json({ success: true, projects });
+// ── 라우팅: / → 로그인, /app → 인증된 앱 ──
+app.get('/', (req, res) => {
+  res.redirect('/login.html');
 });
 
-// POST /api/projects — 프로젝트 목록 전체를 서버에 저장 (동기화)
-app.post('/api/projects', (req, res) => {
-  const { projects } = req.body;
-  if (!Array.isArray(projects)) {
-    return res.status(400).json({ error: 'projects must be an array' });
-  }
-  const ok = saveServerProjects(projects);
-  if (ok) {
-    console.log(`[DB] POST /api/projects ← ${projects.length}개 프로젝트 저장 완료`);
-    res.json({ success: true, count: projects.length });
-  } else {
-    res.status(500).json({ error: 'Failed to save projects' });
-  }
+app.get('/app', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
+
+// ── 정적 파일 (index: false → / 에서 index.html 자동 서빙 비활성화) ──
+app.use(express.static(__dirname, { index: false }));
+
+// 주의: /api/projects는 auth-server.js에서 인증 미들웨어와 함께 처리됨
 
 // ── Vision API 프롬프트 ──
 const VISION_PROMPT = `You are a mechanical drawing analyzer specialized in reading hand-drawn shaft drawings.
@@ -181,8 +140,8 @@ CRITICAL RULES:
 
 Return ONLY the JSON object, nothing else.`;
 
-// ── POST /api/analyze ──
-app.post('/api/analyze', upload.single('image'), async (req, res) => {
+// ── POST /api/analyze (인증 필요) ──
+app.post('/api/analyze', requireAuth, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file provided' });

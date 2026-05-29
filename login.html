@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoDrawing — 로그인</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: #0f1117;
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-container {
+      width: 100%; max-width: 420px;
+      padding: 20px;
+    }
+
+    .login-logo {
+      text-align: center; margin-bottom: 40px;
+    }
+    .login-logo i {
+      font-size: 48px;
+      color: #6366f1;
+      margin-bottom: 12px;
+      display: block;
+    }
+    .login-logo h1 {
+      font-size: 28px; font-weight: 700;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .login-logo p {
+      color: #71717a; font-size: 14px; margin-top: 4px;
+    }
+
+    .login-card {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 16px;
+      padding: 32px;
+    }
+
+    .form-group { margin-bottom: 20px; }
+    .form-group label {
+      display: block; font-size: 13px; font-weight: 500;
+      color: #a1a1aa; margin-bottom: 6px;
+    }
+    .form-group input {
+      width: 100%; padding: 12px 14px;
+      background: #09090b;
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      color: #e4e4e7; font-size: 14px;
+      transition: border-color 0.2s;
+      font-family: 'Inter', sans-serif;
+    }
+    .form-group input:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+    }
+
+    .login-btn {
+      width: 100%; padding: 12px;
+      background: linear-gradient(135deg, #6366f1, #7c3aed);
+      border: none; border-radius: 8px;
+      color: #fff; font-size: 15px; font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .login-btn:hover { opacity: 0.9; }
+    .login-btn:active { transform: scale(0.98); }
+    .login-btn:disabled {
+      opacity: 0.5; cursor: not-allowed;
+    }
+
+    .login-error {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #fca5a5;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .login-error.visible { display: flex; align-items: center; gap: 8px; }
+    .login-error i { color: #ef4444; }
+
+    .login-footer {
+      text-align: center; margin-top: 24px;
+      color: #52525b; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="login-logo">
+      <i class="fas fa-drafting-compass"></i>
+      <h1>AutoDrawing</h1>
+      <p>AI 기반 도면 자동 생성 시스템</p>
+    </div>
+
+    <div class="login-card">
+      <div class="login-error" id="loginError">
+        <i class="fas fa-exclamation-circle"></i>
+        <span id="loginErrorMsg"></span>
+      </div>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="userId">아이디</label>
+          <input type="text" id="userId" name="userId" placeholder="아이디를 입력하세요" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="password">비밀번호</label>
+          <input type="password" id="password" name="password" placeholder="비밀번호를 입력하세요" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="login-btn" id="loginBtn">
+          <i class="fas fa-sign-in-alt"></i> 로그인
+        </button>
+      </form>
+    </div>
+
+    <div class="login-footer">
+      &copy; 2025 AutoDrawing v2.0 — Kleannara
+    </div>
+  </div>
+
+  <script>
+    // 이미 로그인된 경우 리디렉트
+    (async () => {
+      const sid = localStorage.getItem('ad_session');
+      if (sid) {
+        try {
+          const res = await fetch('/api/auth/session', { headers: { 'X-Session-Id': sid } });
+          const data = await res.json();
+          if (data.success) {
+            if (data.user.role === 'master') {
+              window.location.href = '/master.html';
+            } else {
+              window.location.href = '/app';
+            }
+            return;
+          }
+        } catch(e) {}
+        localStorage.removeItem('ad_session');
+      }
+    })();
+
+    const form = document.getElementById('loginForm');
+    const errorDiv = document.getElementById('loginError');
+    const errorMsg = document.getElementById('loginErrorMsg');
+    const loginBtn = document.getElementById('loginBtn');
+
+    function showError(msg) {
+      errorMsg.textContent = msg;
+      errorDiv.classList.add('visible');
+    }
+    function hideError() {
+      errorDiv.classList.remove('visible');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+      loginBtn.disabled = true;
+      loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 로그인 중...';
+
+      const userId = document.getElementById('userId').value.trim();
+      const password = document.getElementById('password').value;
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, password }),
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          localStorage.setItem('ad_session', data.sessionId);
+          if (data.user.role === 'master') {
+            window.location.href = '/master.html';
+          } else {
+            window.location.href = '/app';
+          }
+        } else {
+          showError(data.error || '로그인에 실패했습니다.');
+        }
+      } catch (err) {
+        showError('서버 연결에 실패했습니다.');
+      }
+
+      loginBtn.disabled = false;
+      loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> 로그인';
+    });
+  </script>
+</body>
+</html>

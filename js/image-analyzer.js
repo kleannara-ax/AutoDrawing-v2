@@ -437,9 +437,9 @@ const ImageAnalyzer = (() => {
             </div>
             <div id="snapRingInputs" style="display:grid; gap:8px;"></div>
 
-            <!-- 체인기어(스프라켓) 갯수 선택 + 동적 입력 -->
+            <!-- 체인스프라켓(스프라켓) 갯수 선택 + 동적 입력 -->
             <div style="margin-top:12px; display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-              <label style="font-size:12px; color:#fb923c; font-weight:600;">⚙ 체인기어 수</label>
+              <label style="font-size:12px; color:#fb923c; font-weight:600;">⚙ 체인스프라켓 수</label>
               <input type="number" id="paramChainGearCount" value="0" min="0" max="2"
                 style="width:60px; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:13px; text-align:center;">
               <span style="font-size:10px; color:#6b7280;">0 = 없음, 최대 2</span>
@@ -588,6 +588,61 @@ const ImageAnalyzer = (() => {
               style="padding:7px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:13px;">
           `;
           sectionInputsDiv.appendChild(row);
+
+          // ★ v114: 프로파일 타입 + 테이퍼 끝직경 행
+          const profileRow = document.createElement('div');
+          profileRow.style.cssText = 'display:grid; grid-template-columns:40px 1fr 1fr; gap:8px; align-items:center; margin-bottom:2px;';
+          profileRow.innerHTML = `
+            <span style="font-size:10px; color:#64748b;"></span>
+            <select class="sec-profile" data-idx="${i}"
+              style="padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:4px; color:#a78bfa; font-size:11px; cursor:pointer;">
+              <option value="CYLINDER">원통 (CYLINDER)</option>
+              <option value="TAPER">테이퍼 (TAPER)</option>
+            </select>
+            <input type="number" class="sec-diameter-end" data-idx="${i}" placeholder="우측 직경" min="1"
+              style="padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:4px; color:#a78bfa; font-size:11px; display:none;">
+          `;
+          sectionInputsDiv.appendChild(profileRow);
+
+          // 프로파일 선택 시 끝직경 입력 표시/숨김 + 라벨 변경
+          const profileSel = profileRow.querySelector(`.sec-profile[data-idx="${i}"]`);
+          const diamEndEl = profileRow.querySelector(`.sec-diameter-end[data-idx="${i}"]`);
+          const diamStartEl = row.querySelector(`.sec-diameter[data-idx="${i}"]`);
+          profileSel.addEventListener('change', function() {
+            const isTaper = profileSel.value === 'TAPER';
+            diamEndEl.style.display = isTaper ? 'inline-block' : 'none';
+            diamStartEl.placeholder = isTaper ? '좌측 직경' : '직경';
+          });
+
+          // ★ v111: 모따기(chamfer) 옵션 행 — 좌측/우측 체크박스 + C값 입력
+          const chamferRow = document.createElement('div');
+          chamferRow.style.cssText = 'display:grid; grid-template-columns:40px 1fr 1fr; gap:8px; align-items:center; margin-bottom:4px;';
+          chamferRow.innerHTML = `
+            <span style="font-size:10px; color:#64748b;"></span>
+            <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:#94a3b8; cursor:pointer;">
+              <input type="checkbox" class="sec-chamfer-left" data-idx="${i}"
+                style="width:14px; height:14px; accent-color:#f59e0b; cursor:pointer;">
+              <span>좌 모따기</span>
+              <input type="number" class="sec-chamfer-left-val" data-idx="${i}" placeholder="C" min="0.1" step="0.1"
+                style="width:50px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:4px; color:#fbbf24; font-size:11px; display:none;">
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:#94a3b8; cursor:pointer;">
+              <input type="checkbox" class="sec-chamfer-right" data-idx="${i}"
+                style="width:14px; height:14px; accent-color:#f59e0b; cursor:pointer;">
+              <span>우 모따기</span>
+              <input type="number" class="sec-chamfer-right-val" data-idx="${i}" placeholder="C" min="0.1" step="0.1"
+                style="width:50px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:4px; color:#fbbf24; font-size:11px; display:none;">
+            </label>
+          `;
+          sectionInputsDiv.appendChild(chamferRow);
+
+          // 체크박스 토글 시 C값 입력 표시/숨김
+          const chkL = chamferRow.querySelector(`.sec-chamfer-left[data-idx="${i}"]`);
+          const valL = chamferRow.querySelector(`.sec-chamfer-left-val[data-idx="${i}"]`);
+          const chkR = chamferRow.querySelector(`.sec-chamfer-right[data-idx="${i}"]`);
+          const valR = chamferRow.querySelector(`.sec-chamfer-right-val[data-idx="${i}"]`);
+          chkL.addEventListener('change', function() { valL.style.display = chkL.checked ? 'inline-block' : 'none'; });
+          chkR.addEventListener('change', function() { valR.style.display = chkR.checked ? 'inline-block' : 'none'; });
         }
 
         // 직경 변경 시 중공축 외경 자동 업데이트
@@ -604,7 +659,7 @@ const ImageAnalyzer = (() => {
         updateSnapRingSelects(count);
         // 관통 구멍 select 업데이트
         updateThroughHoleSelects(count);
-        // 체인기어 select 업데이트
+        // 체인스프라켓 select 업데이트
         if (typeof updateChainGearSelects === 'function') updateChainGearSelects(count);
       }
 
@@ -643,6 +698,18 @@ const ImageAnalyzer = (() => {
               <label style="font-size:12px; color:#93c5fd; font-weight:600;">키홈 ${k + 1}</label>
               <select class="kw-sec" data-kw-idx="${k}" style="width:60px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
                 ${secOptions}
+              </select>
+              <select class="kw-dir" data-kw-idx="${k}" style="width:70px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#a78bfa; font-size:11px; cursor:pointer;" title="키 방향: 정면(front) / 측면(side)">
+                <option value="side">측면</option>
+                <option value="front">정면</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+              <label style="font-size:10px; color:#6b7280;">키 형상:</label>
+              <select class="kw-shape" data-kw-idx="${k}" style="padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#22d3ee; font-size:11px; cursor:pointer;">
+                <option value="obround">양쪽 둥근형</option>
+                <option value="one-side-round">한쪽 둥근형</option>
+                <option value="rect">양쪽 네모형</option>
               </select>
             </div>
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:6px;">
@@ -849,7 +916,7 @@ const ImageAnalyzer = (() => {
         throughHoleCountInput.addEventListener(evt, onThroughHoleCountChange);
       });
 
-      // ── 체인기어(스프라켓) 동적 입력 빌더 ──
+      // ── 체인스프라켓(스프라켓) 동적 입력 빌더 ──
       // RS 체인 규격별 피치 (mm)
       const RS_PITCH = { RS25: 6.35, RS35: 9.525, RS40: 12.7, RS50: 15.875, RS60: 19.05, RS80: 25.4, RS100: 31.75, RS120: 38.1 };
 
@@ -863,17 +930,21 @@ const ImageAnalyzer = (() => {
           const block = document.createElement('div');
           block.style.cssText = 'background:#1e2230; border:1px solid #f97316; border-radius:8px; padding:12px;';
 
-          // 구간 선택: 첫번째(S1) 또는 마지막(Sn)만 가능
+          // 구간 선택: S1, S1~S2, S2~S3, ..., SN 형태
           let secOptions = '';
           if (secCount > 0) {
             secOptions += `<option value="${firstSec}">${firstSec} (첫번째)</option>`;
+            for (let si = 1; si < secCount; si++) {
+              const val = `S${si}~S${si+1}`;
+              secOptions += `<option value="${val}">${val} (사이)</option>`;
+            }
             if (secCount > 1) secOptions += `<option value="${lastSec}">${lastSec} (마지막)</option>`;
           }
 
           block.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-              <label style="font-size:12px; color:#fb923c; font-weight:600;">⚙ 체인기어 ${k + 1}</label>
-              <select class="cg-sec" data-cg-idx="${k}" style="width:90px; padding:4px; background:#242836; border:1px solid #f97316; border-radius:6px; color:#fb923c; font-size:12px;">
+              <label style="font-size:12px; color:#fb923c; font-weight:600;">⚙ 체인스프라켓 ${k + 1}</label>
+              <select class="cg-sec" data-cg-idx="${k}" style="width:120px; padding:4px; background:#242836; border:1px solid #f97316; border-radius:6px; color:#fb923c; font-size:12px;">
                 ${secOptions}
               </select>
               <span class="cg-side-display" data-cg-idx="${k}" style="font-size:11px; color:#94a3b8;">위치: 좌측</span>
@@ -956,16 +1027,27 @@ const ImageAnalyzer = (() => {
                 <span style="font-size:11px; color:#a78bfa;">보스(boss) 있음</span>
               </label>
               <div class="cg-boss-inputs" data-cg-idx="${k}" style="display:none; margin-top:4px;">
-                <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap;">
                   <label style="font-size:9px; color:#6b7280;">보스 갯수</label>
-                  <input type="number" class="cg-boss-count" data-cg-idx="${k}" value="1" min="1" max="2"
+                  <input type="number" class="cg-boss-count" data-cg-idx="${k}" value="1" min="1" max="5"
                     style="width:50px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:4px; color:#e2e8f0; font-size:11px; text-align:center;">
+                  <label style="font-size:9px; color:#6b7280; margin-left:8px;">보스 위치</label>
+                  <select class="cg-boss-dir" data-cg-idx="${k}" style="width:80px; padding:4px; background:#242836; border:1px solid #a78bfa; border-radius:4px; color:#a78bfa; font-size:11px;">
+                    <option value="left">좌측</option>
+                    <option value="right">우측</option>
+                  </select>
                 </div>
+                <div style="font-size:9px; color:#6b7280; margin-bottom:6px;">* 보스 1이 스프라켓에 가장 가까움 (스프라켓→보스1→보스2→...→축끝)</div>
                 <div class="cg-boss-detail-container" data-cg-idx="${k}" style="display:grid; gap:6px;"></div>
               </div>
             </div>
-            <div style="font-size:10px; color:#6b7280; margin-top:4px; border-top:1px solid #333; padding-top:4px;">
-              * 보조투상도: 기어 위치 방향으로 톱니 형상 자동 생성
+
+            <!-- 보조투상도 -->
+            <div style="margin-top:4px; border-top:1px solid #333; padding-top:4px;">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" class="cg-aux-view" data-cg-idx="${k}" checked>
+                <span style="font-size:11px; color:#6b7280;">보조투상도 (톱니 형상) 그리기</span>
+              </label>
             </div>
           `;
           chainGearInputsDiv.appendChild(block);
@@ -976,9 +1058,11 @@ const ImageAnalyzer = (() => {
           function updateSide() {
             const val = secSel.value;
             if (val === firstSec) {
-              sideDisp.textContent = '위치: 좌측';
+              sideDisp.textContent = '위치: 좌측 끝';
             } else if (val === lastSec) {
-              sideDisp.textContent = '위치: 우측';
+              sideDisp.textContent = '위치: 우측 끝';
+            } else if (val.includes('~')) {
+              sideDisp.textContent = `위치: ${val} 사이`;
             }
           }
           secSel.addEventListener('change', updateSide);
@@ -1003,7 +1087,7 @@ const ImageAnalyzer = (() => {
               const bossBlock = document.createElement('div');
               bossBlock.style.cssText = 'background:#262a3a; border:1px solid #7c3aed; border-radius:6px; padding:8px;';
               bossBlock.innerHTML = `
-                <div style="font-size:10px; color:#a78bfa; font-weight:600; margin-bottom:4px;">보스 ${b + 1} (${b === 0 ? '좌측' : '우측'})</div>
+                <div style="font-size:10px; color:#a78bfa; font-weight:600; margin-bottom:4px;">보스 ${b + 1}</div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:4px;">
                   <div>
                     <label style="font-size:9px; color:#6b7280;">보스 외경 (mm)</label>
@@ -1055,7 +1139,7 @@ const ImageAnalyzer = (() => {
 
           ['input', 'change'].forEach(evt => {
             bossCountInput.addEventListener(evt, () => {
-              const bc = Math.min(Math.max(parseInt(bossCountInput.value) || 1, 1), 2);
+              const bc = Math.min(Math.max(parseInt(bossCountInput.value) || 1, 1), 5);
               bossCountInput.value = bc;
               buildBossDetails(k, bc);
             });
@@ -1070,8 +1154,13 @@ const ImageAnalyzer = (() => {
           const val = sel.value;
           sel.innerHTML = '';
           if (secCount > 0) sel.innerHTML += `<option value="${firstSec}">${firstSec} (첫번째)</option>`;
+          for (let si = 1; si < secCount; si++) {
+            const bv = `S${si}~S${si+1}`;
+            sel.innerHTML += `<option value="${bv}">${bv} (사이)</option>`;
+          }
           if (secCount > 1) sel.innerHTML += `<option value="${lastSec}">${lastSec} (마지막)</option>`;
-          sel.value = val;
+          // 이전 값 복원 시도
+          if ([...sel.options].some(o => o.value === val)) sel.value = val;
         });
       }
 
@@ -1116,6 +1205,26 @@ const ImageAnalyzer = (() => {
               const diamEl = sectionInputsDiv.querySelector(`.sec-diameter[data-idx="${i}"]`);
               if (lenEl && sec.length) lenEl.value = sec.length;
               if (diamEl && sec.diameter) diamEl.value = sec.diameter;
+              // ★ v114: 프로파일 타입 prefill
+              if (sec.profile === 'TAPER') {
+                const profEl = sectionInputsDiv.querySelector(`.sec-profile[data-idx="${i}"]`);
+                const deEl = sectionInputsDiv.querySelector(`.sec-diameter-end[data-idx="${i}"]`);
+                if (profEl) { profEl.value = 'TAPER'; profEl.dispatchEvent(new Event('change')); }
+                if (deEl && sec.diameterEnd) deEl.value = sec.diameterEnd;
+              }
+              // ★ v111: 모따기 prefill
+              if (sec.chamferLeft > 0) {
+                const chk = sectionInputsDiv.querySelector(`.sec-chamfer-left[data-idx="${i}"]`);
+                const val = sectionInputsDiv.querySelector(`.sec-chamfer-left-val[data-idx="${i}"]`);
+                if (chk) { chk.checked = true; chk.dispatchEvent(new Event('change')); }
+                if (val) val.value = sec.chamferLeft;
+              }
+              if (sec.chamferRight > 0) {
+                const chk = sectionInputsDiv.querySelector(`.sec-chamfer-right[data-idx="${i}"]`);
+                const val = sectionInputsDiv.querySelector(`.sec-chamfer-right-val[data-idx="${i}"]`);
+                if (chk) { chk.checked = true; chk.dispatchEvent(new Event('change')); }
+                if (val) val.value = sec.chamferRight;
+              }
             });
           }
 
@@ -1164,6 +1273,8 @@ const ImageAnalyzer = (() => {
               const dEl = keywayInputsDiv.querySelector(`.kw-d[data-kw-idx="${k}"]`); if (dEl && kw.depth) dEl.value = kw.depth;
               const loEl = keywayInputsDiv.querySelector(`.kw-left-off[data-kw-idx="${k}"]`); if (loEl && kw.leftOffset != null) loEl.value = kw.leftOffset;
               const roEl = keywayInputsDiv.querySelector(`.kw-right-off[data-kw-idx="${k}"]`); if (roEl && kw.rightOffset != null) roEl.value = kw.rightOffset;
+              const dirEl = keywayInputsDiv.querySelector(`.kw-dir[data-kw-idx="${k}"]`); if (dirEl && kw.direction) dirEl.value = kw.direction;  // v116: 키 방향 복원
+              const shpEl = keywayInputsDiv.querySelector(`.kw-shape[data-kw-idx="${k}"]`); if (shpEl && kw.shape) shpEl.value = kw.shape;  // v117: 키 형상 복원
             });
           }
 
@@ -1191,13 +1302,22 @@ const ImageAnalyzer = (() => {
             });
           }
 
-          // 체인기어
+          // 체인스프라켓
           if (pd.chainGears && pd.chainGears.length > 0) {
             chainGearCountInput.value = pd.chainGears.length;
             buildChainGearInputs(pd.chainGears.length);
             _lastCgCount = pd.chainGears.length;
             pd.chainGears.forEach((cg, k) => {
-              const sel = chainGearInputsDiv.querySelector(`.cg-sec[data-cg-idx="${k}"]`); if (sel && cg.section) sel.value = cg.section;
+              const sel = chainGearInputsDiv.querySelector(`.cg-sec[data-cg-idx="${k}"]`);
+              if (sel) {
+                if (cg.placement === 'between' && cg.sectionLeft && cg.sectionRight) {
+                  sel.value = `${cg.sectionLeft}~${cg.sectionRight}`;
+                } else if (cg.section) {
+                  sel.value = cg.section;
+                }
+                // side display 업데이트 트리거
+                sel.dispatchEvent(new Event('change'));
+              }
               const specSel = chainGearInputsDiv.querySelector(`.cg-chain-spec[data-cg-idx="${k}"]`); if (specSel && cg.chainSpec) specSel.value = cg.chainSpec;
               const tEl = chainGearInputsDiv.querySelector(`.cg-teeth[data-cg-idx="${k}"]`); if (tEl && cg.teeth) tEl.value = cg.teeth;
               const oEl = chainGearInputsDiv.querySelector(`.cg-outer-diam[data-cg-idx="${k}"]`); if (oEl && cg.outerDiam) oEl.value = cg.outerDiam;
@@ -1242,6 +1362,14 @@ const ImageAnalyzer = (() => {
                 }, 50);
               }
 
+              // 보스 위치(좌/우) 복원
+              const bossDirSel = chainGearInputsDiv.querySelector(`.cg-boss-dir[data-cg-idx="${k}"]`);
+              if (bossDirSel && cg.bossDirection) bossDirSel.value = cg.bossDirection;
+
+              // 보조투상도 체크박스 복원
+              const auxChk = chainGearInputsDiv.querySelector(`.cg-aux-view[data-cg-idx="${k}"]`);
+              if (auxChk) auxChk.checked = cg.auxView !== false;
+
               // side display 업데이트
               const sideDisp = chainGearInputsDiv.querySelector(`.cg-side-display[data-cg-idx="${k}"]`);
               if (sideDisp) sideDisp.textContent = cg.side === 'left' ? '위치: 좌측' : '위치: 우측';
@@ -1284,6 +1412,9 @@ const ImageAnalyzer = (() => {
         const allDiameters = [];
         let hasError = false;
 
+        // ★ v111: 구간별 모따기(chamfer) 데이터 수집
+        const sectionChamfers = [];
+
         for (let i = 0; i < count; i++) {
           const lenEl = sectionInputsDiv.querySelector(`.sec-length[data-idx="${i}"]`);
           const diamEl = sectionInputsDiv.querySelector(`.sec-diameter[data-idx="${i}"]`);
@@ -1303,10 +1434,30 @@ const ImageAnalyzer = (() => {
             position: `S${i + 1}`,
           });
 
+          // ★ v114: 프로파일 타입 + 끝직경 (TAPER)
+          const profileEl = sectionInputsDiv.querySelector(`.sec-profile[data-idx="${i}"]`);
+          const diamEndEl = sectionInputsDiv.querySelector(`.sec-diameter-end[data-idx="${i}"]`);
+          const profile = profileEl?.value || 'CYLINDER';
+          const diamEnd = parseFloat(diamEndEl?.value) || null;
+
           allDiameters.push({
             section: `S${i + 1}`,
             value: diam || null,
+            // v114: 테이퍼인 경우 끝직경 추가
+            valueDiamEnd: (profile === 'TAPER') ? (diamEnd || diam || null) : null,
+            profile: profile,
             confidence: diam ? CONF.CONFIRMED : CONF.UNCERTAIN,
+          });
+
+          // v111: 모따기 데이터
+          const chkL = sectionInputsDiv.querySelector(`.sec-chamfer-left[data-idx="${i}"]`);
+          const valL = sectionInputsDiv.querySelector(`.sec-chamfer-left-val[data-idx="${i}"]`);
+          const chkR = sectionInputsDiv.querySelector(`.sec-chamfer-right[data-idx="${i}"]`);
+          const valR = sectionInputsDiv.querySelector(`.sec-chamfer-right-val[data-idx="${i}"]`);
+          sectionChamfers.push({
+            section: `S${i + 1}`,
+            left: chkL?.checked ? (parseFloat(valL?.value) || 1) : 0,
+            right: chkR?.checked ? (parseFloat(valR?.value) || 1) : 0,
           });
         }
 
@@ -1412,6 +1563,8 @@ const ImageAnalyzer = (() => {
           const kwD = parseFloat(keywayInputsDiv.querySelector(`.kw-d[data-kw-idx="${k}"]`)?.value);
           const kwLeftOff = parseFloat(keywayInputsDiv.querySelector(`.kw-left-off[data-kw-idx="${k}"]`)?.value);
           const kwRightOff = parseFloat(keywayInputsDiv.querySelector(`.kw-right-off[data-kw-idx="${k}"]`)?.value);
+          const kwDir = keywayInputsDiv.querySelector(`.kw-dir[data-kw-idx="${k}"]`)?.value || 'side';  // v116: 키 방향
+          const kwShape = keywayInputsDiv.querySelector(`.kw-shape[data-kw-idx="${k}"]`)?.value || 'obround';  // v117: 키 형상
 
           // 양쪽 오프셋이 있고 폭이 없으면 자동 계산
           if (kwSec && !kwW && !isNaN(kwLeftOff) && !isNaN(kwRightOff)) {
@@ -1431,23 +1584,28 @@ const ImageAnalyzer = (() => {
               keywayDepth: kwD || 3.5,
               keywayLeftOffset: isNaN(kwLeftOff) ? null : kwLeftOff,
               keywayRightOffset: isNaN(kwRightOff) ? null : kwRightOff,
+              keywayDirection: kwDir,  // v116: 'front' 또는 'side'
+              keywayShape: kwShape,    // v117: 'obround' | 'one-side-round' | 'rect'
               side: k % 2 === 0 ? 'left' : 'right',
               confidence: CONF.CONFIRMED,
             });
-            auxiliaryViews.push({
-              id: `AUX${k + 1}`,
-              position: auxPositions[k % auxPositions.length],
-              label: '',
-              shape: { type: 'obround', width: kwW, height: kwH || 6, confidence: CONF.CONFIRMED },
-              dimensions: [
-                { axis: 'horizontal', value: kwW, confidence: CONF.CONFIRMED },
-                { axis: 'vertical', value: kwH || 6, confidence: CONF.CONFIRMED },
-              ],
-              relatedSection: kwSec,
-              projectionLines: true,
-              keywayLeftOffset: isNaN(kwLeftOff) ? null : kwLeftOff,
-              keywayRightOffset: isNaN(kwRightOff) ? null : kwRightOff,
-            });
+            // v116: 측면(side) 키홈만 보조투상도 생성 — 정면(front)은 메인 뷰에 직접 그림
+            if (kwDir !== 'front') {
+              auxiliaryViews.push({
+                id: `AUX${k + 1}`,
+                position: auxPositions[k % auxPositions.length],
+                label: '',
+                shape: { type: kwShape || 'obround', width: kwW, height: kwH || 6, confidence: CONF.CONFIRMED },
+                dimensions: [
+                  { axis: 'horizontal', value: kwW, confidence: CONF.CONFIRMED },
+                  { axis: 'vertical', value: kwH || 6, confidence: CONF.CONFIRMED },
+                ],
+                relatedSection: kwSec,
+                projectionLines: true,
+                keywayLeftOffset: isNaN(kwLeftOff) ? null : kwLeftOff,
+                keywayRightOffset: isNaN(kwRightOff) ? null : kwRightOff,
+              });
+            }
           }
         }
 
@@ -1496,14 +1654,30 @@ const ImageAnalyzer = (() => {
           }
         }
 
-        // ── 체인기어(스프라켓) 데이터 수집 ──
+        // ── 체인스프라켓(스프라켓) 데이터 수집 ──
         const cgCount = parseInt(chainGearCountInput.value) || 0;
         const chainGears = [];
         const firstSec = 'S1';
         const lastSecId = `S${count}`;
         for (let k = 0; k < cgCount; k++) {
           const cgSec = chainGearInputsDiv.querySelector(`.cg-sec[data-cg-idx="${k}"]`)?.value || '';
-          const cgSide = (cgSec === firstSec) ? 'left' : 'right';
+          const isBetween = cgSec.includes('~');
+          let cgSide, cgPlacement, cgSectionLeft, cgSectionRight;
+          if (isBetween) {
+            cgPlacement = 'between';
+            const parts = cgSec.split('~');
+            cgSectionLeft = parts[0];
+            cgSectionRight = parts[1];
+            cgSide = 'left'; // default, overridden by bossDirection below
+          } else {
+            cgPlacement = 'edge';
+            cgSide = (cgSec === firstSec) ? 'left' : 'right';
+            cgSectionLeft = null;
+            cgSectionRight = null;
+          }
+
+          // 보조투상도 체크박스
+          const cgAuxView = chainGearInputsDiv.querySelector(`.cg-aux-view[data-cg-idx="${k}"]`)?.checked ?? true;
           const cgChainSpec = chainGearInputsDiv.querySelector(`.cg-chain-spec[data-cg-idx="${k}"]`)?.value || 'RS35';
           const cgTeeth = parseInt(chainGearInputsDiv.querySelector(`.cg-teeth[data-cg-idx="${k}"]`)?.value) || 9;
           const cgOuterDiam = parseFloat(chainGearInputsDiv.querySelector(`.cg-outer-diam[data-cg-idx="${k}"]`)?.value);
@@ -1550,10 +1724,13 @@ const ImageAnalyzer = (() => {
             };
           }
 
+          // 보스 위치(좌/우) — UI 셀렉트에서 읽기
+          const cgBossDirVal = chainGearInputsDiv.querySelector(`.cg-boss-dir[data-cg-idx="${k}"]`)?.value || 'left';
+
           if (cgSec && cgOuterDiam > 0) {
-            chainGears.push({
+            const cgData = {
               id: `CG${k + 1}`,
-              section: cgSec,
+              section: isBetween ? cgSectionLeft : cgSec,
               side: cgSide,
               chainSpec: cgChainSpec,
               teeth: cgTeeth,
@@ -1562,8 +1739,16 @@ const ImageAnalyzer = (() => {
               gearWidth: cgWidth || 0,
               key: cgKey,
               boss: cgBoss,
+              auxView: cgAuxView,
+              bossDirection: cgBossDirVal,
               confidence: CONF.CONFIRMED,
-            });
+            };
+            if (isBetween) {
+              cgData.placement = 'between';
+              cgData.sectionLeft = cgSectionLeft;
+              cgData.sectionRight = cgSectionRight;
+            }
+            chainGears.push(cgData);
           }
         }
 
@@ -1613,6 +1798,13 @@ const ImageAnalyzer = (() => {
             { side: 'left', spec: null, confidence: CONF.UNCERTAIN },
             { side: 'right', spec: null, confidence: CONF.UNCERTAIN },
           ],
+          sectionChamfers,  // v111: 구간별 모따기 [{section, left, right}, ...]
+          // ★ v114: 구간별 프로파일 (CYLINDER/TAPER)
+          sectionProfiles: allDiameters.map(d => ({
+            section: d.section,
+            profile: d.profile || 'CYLINDER',
+            diameterEnd: d.valueDiamEnd,  // TAPER인 경우 우측 직경
+          })),
           keyways: [],
           centerHoles: [
             { side: 'left', diameter: null, confidence: CONF.UNCERTAIN },
@@ -1669,6 +1861,10 @@ const ImageAnalyzer = (() => {
       id: s.id,
       length: s.length,
       diameter: s.diameter,
+      chamferLeft: s.chamferLeft || 0,    // v111: 모따기
+      chamferRight: s.chamferRight || 0,  // v111: 모따기
+      profile: s.profile || 'CYLINDER',   // v114: 프로파일 타입
+      diameterEnd: s.diameterEnd || null, // v114: 테이퍼 끝직경
     }));
 
     const pd = {
@@ -1709,6 +1905,8 @@ const ImageAnalyzer = (() => {
         depth: kw.keywayDepth,
         leftOffset: kw.keywayLeftOffset,
         rightOffset: kw.keywayRightOffset,
+        direction: kw.keywayDirection || 'side',  // v116: 키 방향
+        shape: kw.keywayShape || 'obround',       // v117: 키 형상
       }));
     }
 
@@ -1734,19 +1932,30 @@ const ImageAnalyzer = (() => {
       }));
     }
 
-    // 체인기어
+    // 체인스프라켓
     if (spec.chainGears && spec.chainGears.length > 0) {
-      pd.chainGears = spec.chainGears.map(cg => ({
-        section: cg.section,
-        side: cg.side,
-        chainSpec: cg.chainSpec,
-        teeth: cg.teeth,
-        outerDiam: cg.outerDiam,
-        boreDiam: cg.boreDiam,
-        gearWidth: cg.gearWidth,
-        key: cg.key || null,
-        boss: cg.boss || null,
-      }));
+      pd.chainGears = spec.chainGears.map(cg => {
+        const obj = {
+          section: cg.section,
+          side: cg.side,
+          chainSpec: cg.chainSpec,
+          teeth: cg.teeth,
+          outerDiam: cg.outerDiam,
+          boreDiam: cg.boreDiam,
+          gearWidth: cg.gearWidth,
+          key: cg.key || null,
+          boss: cg.boss || null,
+          auxView: cg.auxView !== false,  // 기본값 true
+          bossDirection: cg.bossDirection || 'left',
+        };
+        // between 배치 데이터 보존
+        if (cg.placement === 'between') {
+          obj.placement = 'between';
+          obj.sectionLeft = cg.sectionLeft;
+          obj.sectionRight = cg.sectionRight;
+        }
+        return obj;
+      });
     }
 
     return pd;

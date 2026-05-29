@@ -47,15 +47,17 @@ const DrawingModel = (() => {
         remarks: '',
       },
       layers: {
-        outlines:    { visible: true, locked: false, color: '#000000', label: '외형선' },
-        centerlines: { visible: true, locked: false, color: '#f87171', label: '중심선' },
-        dimensions:  { visible: true, locked: false, color: '#60a5fa', label: '치수' },
-        texts:       { visible: true, locked: false, color: '#94a3b8', label: '텍스트' },
-        holes:       { visible: true, locked: false, color: '#a78bfa', label: '구멍/탭' },
-        slots:       { visible: true, locked: false, color: '#fbbf24', label: '슬롯/장공' },
-        hatching:    { visible: true, locked: false, color: '#475569', label: '해칭' },
-        hiddenlines: { visible: true, locked: false, color: '#4ade80', label: '숨은선' },
-        titleblocks: { visible: true, locked: false, color: '#94a3b8', label: '표제란' },
+        outlines:       { visible: true, locked: false, color: '#000000', label: '외형선' },
+        centerlines:    { visible: true, locked: false, color: '#f87171', label: '중심선' },
+        dimensions:     { visible: true, locked: false, color: '#60a5fa', label: '치수' },
+        texts:          { visible: true, locked: false, color: '#94a3b8', label: '텍스트' },
+        holes:          { visible: true, locked: false, color: '#a78bfa', label: '구멍/탭' },
+        slots:          { visible: true, locked: false, color: '#fbbf24', label: '슬롯/장공' },
+        hatching:       { visible: true, locked: false, color: '#475569', label: '해칭' },
+        hiddenlines:    { visible: true, locked: false, color: '#4ade80', label: '숨은선' },
+        surfacefinish:  { visible: true, locked: false, color: '#f472b6', label: '다듬질 기호' },
+        annotations:    { visible: true, locked: false, color: '#f59e0b', label: '기하공차/데이텀' },
+        titleblocks:    { visible: true, locked: false, color: '#94a3b8', label: '표제란' },
       },
       elements: [],
       auxiliaryViews: [],  // v5.5: 보조 투상도 (메인 도면과 독립)
@@ -99,7 +101,7 @@ const DrawingModel = (() => {
    *   'shoulder'  : 단차 견면 (큰직경→작은직경 경계)
    *   'visible'   : 보이는 내부 실선 (작은직경 뒤에 큰직경이 보이는 경계)
    */
-  function createOutline(x1, y1, x2, y2, thickness = 2, _edgeType = null) {
+  function createOutline(x1, y1, x2, y2, thickness = 1, _edgeType = null) {
     return {
       id: generateId('otl'),
       type: 'outline',
@@ -368,6 +370,148 @@ const DrawingModel = (() => {
   }
 
   // ============================================================
+  // Surface Finish Symbol (다듬질 기호) — KS 규격
+  //
+  // 다듬질 등급:
+  //   'grinding'   (연마 다듬질) — ▽▽▽▽  Ra 0.2a,  Rmax 0.8S,  Rz 0.8Z
+  //   'precision'  (정밀 다듬질) — ▽▽▽   Ra 1.6a,  Rmax 6.3S,  Rz 6.3Z
+  //   'normal'     (보통 다듬질) — ▽▽    Ra 6.3a,  Rmax 25S,   Rz 25Z
+  //   'rough'      (거친 다듬질) — ▽     Ra 25a,   Rmax 100S,  Rz 100Z
+  //   'none'       (다듬질 안함) — 기호 표시 안 함
+  //
+  // valueType: 'Ra' | 'Rmax' | 'Rz'
+  // attachTo: 부착 대상 요소 ID (outline 또는 dimension)
+  // ============================================================
+
+  /**
+   * 다듬질 기호 표준값 테이블
+   */
+  const SURFACE_FINISH_TABLE = {
+    grinding:  { Ra: '0.2a',  Rmax: '0.8S',  Rz: '0.8Z',  triangles: 4, label: '연마 다듬질' },
+    precision: { Ra: '1.6a',  Rmax: '6.3S',  Rz: '6.3Z',  triangles: 3, label: '정밀 다듬질' },
+    normal:    { Ra: '6.3a',  Rmax: '25S',   Rz: '25Z',   triangles: 2, label: '보통 다듬질' },
+    rough:     { Ra: '25a',   Rmax: '100S',  Rz: '100Z',  triangles: 1, label: '거친 다듬질' },
+    none:      { Ra: '~',     Rmax: '~',     Rz: '~',     triangles: 0, label: '다듬질 안함' },
+  };
+
+  /**
+   * 다듬질 기호 (Surface Finish Symbol)
+   *
+   * @param {number} x - 기호 위치 X (부착 면의 중간점)
+   * @param {number} y - 기호 위치 Y (부착 면의 상단)
+   * @param {string} grade - 다듬질 등급: 'grinding'|'precision'|'normal'|'rough'|'none'
+   * @param {string} valueType - 표준값 유형: 'Ra'|'Rmax'|'Rz'
+   * @param {string|null} attachTo - 부착 대상 요소 ID
+   * @param {number} rotation - 회전 각도 (도, 기본 0 = 위쪽)
+   */
+  function createSurfaceFinish(x, y, grade = 'normal', valueType = 'Ra', attachTo = null, rotation = 0) {
+    const info = SURFACE_FINISH_TABLE[grade] || SURFACE_FINISH_TABLE.normal;
+    return {
+      id: generateId('sf'),
+      type: 'surfacefinish',
+      layer: 'surfacefinish',
+      x, y,
+      grade,           // 'grinding' | 'precision' | 'normal' | 'rough' | 'none'
+      valueType,       // 'Ra' | 'Rmax' | 'Rz'
+      value: info[valueType] || '',  // 실제 표준값 문자열
+      triangles: info.triangles,
+      attachTo,        // 부착 대상 요소 ID (outline or dimension)
+      rotation,        // 회전 각도 (도)
+      color: '#000000',
+      fontSize: 5,
+      locked: false,
+      confidence: null,
+      _isPlaceholder: false,
+    };
+  }
+
+  // ============================================================
+  // Geometric Tolerance (기하공차) — KS B 0608
+  //
+  // 구조: [기호 | 공차값 | 데이텀] 형태의 공차 기입틀
+  // - symbol: 기하공차 기호 종류
+  // - value: 공차 수치 (예: 0.003)
+  // - datum: 데이텀 문자 (예: 'A', 'B') — 없으면 null
+  // - attachTo: 부착 대상 요소 ID (outline 또는 dimension)
+  // - 지시선: 부착면의 치수보조선에서 수직으로 연결
+  // - 복수 공차: stacked 배열로 아래에 추가 기입틀 연결
+  // ============================================================
+
+  const GDT_SYMBOLS = {
+    straightness:    { label: '진직도',       symbol: '⏤',  category: 'form',        needsDatum: false },
+    flatness:        { label: '평면도',       symbol: '⏥',  category: 'form',        needsDatum: false },
+    roundness:       { label: '진원도',       symbol: '○',  category: 'form',        needsDatum: false },
+    cylindricity:    { label: '원통도',       symbol: '⌭',  category: 'form',        needsDatum: false },
+    lineProfile:     { label: '선의 윤곽도',  symbol: '⌒',  category: 'profile',     needsDatum: false },
+    surfaceProfile:  { label: '면의 윤곽도',  symbol: '⌓',  category: 'profile',     needsDatum: false },
+    parallelism:     { label: '평행도',       symbol: '∥',  category: 'orientation', needsDatum: true },
+    perpendicularity:{ label: '직각도',       symbol: '⊥',  category: 'orientation', needsDatum: true },
+    angularity:      { label: '경사도',       symbol: '∠',  category: 'orientation', needsDatum: true },
+    position:        { label: '위치도',       symbol: '⌖',  category: 'location',    needsDatum: true },
+    concentricity:   { label: '동축도',       symbol: '◎',  category: 'location',    needsDatum: true },
+    symmetry:        { label: '대칭도',       symbol: '⌯',  category: 'location',    needsDatum: true },
+    runout:          { label: '원주 흔들림',  symbol: '↗',  category: 'runout',      needsDatum: true },
+    totalRunout:     { label: '온 흔들림',    symbol: '⇗',  category: 'runout',      needsDatum: true },
+  };
+
+  /**
+   * 기하공차 (Geometric Tolerance) 생성
+   *
+   * @param {number} x - 공차 기입틀 위치 X
+   * @param {number} y - 공차 기입틀 위치 Y
+   * @param {string} symbolType - GDT_SYMBOLS 키 (예: 'perpendicularity')
+   * @param {string} value - 공차 수치 문자열 (예: '0.003')
+   * @param {string|null} datum - 데이텀 문자 (예: 'A') — 없으면 null
+   * @param {string|null} attachTo - 부착 대상 요소 ID
+   * @param {object} options - 추가 옵션
+   */
+  function createGeometricTolerance(x, y, symbolType = 'perpendicularity', value = '0.01', datum = null, attachTo = null, options = {}) {
+    return {
+      id: generateId('gdt'),
+      type: 'geotolerance',
+      layer: 'annotations',
+      x, y,
+      symbolType,       // GDT_SYMBOLS 키
+      value,            // 공차 수치 문자열
+      datum,            // 데이텀 문자 (null이면 없음)
+      attachTo,         // 부착 대상 요소 ID
+      leaderSide: options.leaderSide || 'top',  // 지시선 방향: 'top'|'bottom'|'left'|'right'
+      stacked: options.stacked || [],            // 추가 공차 [{symbolType, value, datum}]
+      color: '#000000',
+      fontSize: 4,
+      locked: false,
+      confidence: options.confidence || null,
+      _isPlaceholder: false,
+    };
+  }
+
+  /**
+   * 데이텀 기호 (Datum Feature Symbol) 생성
+   *
+   * @param {number} x - 데이텀 삼각형 꼭짓점 X (면 위 위치)
+   * @param {number} y - 데이텀 삼각형 꼭짓점 Y (면 위 위치)
+   * @param {string} letter - 데이텀 문자 (A, B, C...)
+   * @param {string|null} attachTo - 부착 대상 요소 ID
+   * @param {string} side - 삼각형 방향: 'top'|'bottom'|'left'|'right'
+   */
+  function createDatum(x, y, letter = 'A', attachTo = null, side = 'bottom') {
+    return {
+      id: generateId('dat'),
+      type: 'datum',
+      layer: 'annotations',
+      x, y,
+      letter,           // 데이텀 문자
+      attachTo,         // 부착 대상 요소 ID
+      side,             // 삼각형 방향
+      color: '#000000',
+      fontSize: 4,
+      locked: false,
+      confidence: null,
+      _isPlaceholder: false,
+    };
+  }
+
+  // ============================================================
   // Utility
   // ============================================================
 
@@ -441,6 +585,50 @@ const DrawingModel = (() => {
           hMaxY = Math.max(hMaxY, p.y);
         });
         return { x: hMinX, y: hMinY, width: hMaxX - hMinX, height: hMaxY - hMinY };
+      case 'surfacefinish': {
+        if (el.grade === 'none') {
+          // 물결선 기호 영역 (wavy line + stem) — 50% 축소
+          // renderer: stemH=2, waveW=1.5, waveH=0.4
+          const stemH = 2;
+          const waveW = 1.5;
+          const waveH = 0.4;
+          return {
+            x: el.x - waveW - 1,
+            y: el.y - stemH - waveH - 1,
+            width: waveW * 2 + 2,
+            height: stemH + waveH + 2
+          };
+        }
+        // 정삼각형 역삼각형 ▽ — 간격 0, 서로 붙어있음
+        // renderer 기준: TRI_W=3, TRI_H=2.6, TRI_GAP=0
+        const triCount = el.triangles || 1;
+        const triW = 3;
+        const totalW = triCount * triW;  // 간격 0
+        const triH = 3 * 0.866;         // ≈ 2.6
+        return {
+          x: el.x - totalW / 2 - 0.5,
+          y: el.y - triH - 0.5,
+          width: totalW + 1,
+          height: triH + 1
+        };
+      }
+      case 'geotolerance': {
+        // 공차 기입틀: 각 칸 높이 8px, 폭 = 기호(12) + 수치(20) + 데이텀(12) ≈ 44
+        const frameH = 8;
+        const stackCount = 1 + (el.stacked ? el.stacked.length : 0);
+        const totalH = frameH * stackCount;
+        const frameW = 12 + 20 + (el.datum ? 12 : 0);
+        return { x: el.x, y: el.y, width: frameW, height: totalH + 15 };
+      }
+      case 'datum': {
+        // 데이텀 기호: 삼각형(6x6) + 줄기(3) + 사각형(8x8)
+        return { x: el.x - 4, y: el.y - 20, width: 8, height: 22 };
+      }
+      case 'breakLine': {
+        // 물결표시(생략선): x 중심, topY~botY 수직 범위, gapW 폭
+        const bHalfW = (el.gapW || 6) / 2;
+        return { x: el.x - bHalfW, y: el.topY, width: el.gapW || 6, height: (el.botY - el.topY) };
+      }
       case 'paperBg':
         return { x: el.x || 0, y: el.y || 0, width: el.width || 800, height: el.height || 600 };
       case 'titleblock': {
@@ -456,6 +644,30 @@ const DrawingModel = (() => {
       default:
         return { x: 0, y: 0, width: 0, height: 0 };
     }
+  }
+
+  /**
+   * 물결 생략선 (break line) — 구간 길이 > 1000mm 일 때 중앙에 표시
+   * 정면도에서 긴 구간을 시각적으로 축소했음을 나타내는 물결 기호
+   *
+   * @param {number} x       물결선 중심 X (구간 중앙)
+   * @param {number} topY    물결선 상단 Y (구간 상단 외형선)
+   * @param {number} botY    물결선 하단 Y (구간 하단 외형선)
+   * @param {number} gapW    물결 기호가 차지하는 수평 폭 (px)
+   */
+  function createBreakLine(x, topY, botY, gapW = 6) {
+    return {
+      id: generateId('brk'),
+      type: 'breakLine',
+      layer: 'outlines',
+      x, topY, botY,
+      gapW,
+      thickness: 1,
+      color: '#000000',
+      locked: true,
+      confidence: 'confirmed',
+      _isPlaceholder: false,
+    };
   }
 
   function getAllBounds(elements) {
@@ -485,6 +697,12 @@ const DrawingModel = (() => {
     createHatch,
     createDiameterDimension,
     createAuxiliaryView,
+    createSurfaceFinish,
+    SURFACE_FINISH_TABLE,
+    createGeometricTolerance,
+    createDatum,
+    createBreakLine,
+    GDT_SYMBOLS,
     // Shared elements
     createDimension,
     createText,

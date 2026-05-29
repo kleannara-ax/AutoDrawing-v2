@@ -7,13 +7,22 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "keywords": ["autodrawing", "cad", "mechanical-drawing", "ai", "svg"],
+  "keywords": [
+    "autodrawing",
+    "cad",
+    "mechanical-drawing",
+    "ai",
+    "svg"
+  ],
   "author": "kleannara-ax",
   "license": "ISC",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
     "multer": "^2.1.1",
-    "openai": "^6.33.0"
+    "openai": "^6.33.0",
+    "puppeteer": "^24.43.1",
+    "uuid": "^14.0.0"
   }
 }
