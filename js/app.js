@@ -1509,33 +1509,65 @@ const App = (() => {
    */
   async function restoreFromServer() {
     const local = loadProjects();
-    if (local.length > 0) {
-      // localStorage에 데이터가 있으면 서버에도 동기화
-      syncToServer(local);
-      return;
-    }
 
-    // localStorage가 비어있으면 서버에서 복구 시도
+    // 항상 서버 데이터를 먼저 조회한다 (서버가 신뢰 기준 = source of truth)
+    let serverProjects = [];
     try {
       const sid = localStorage.getItem('ad_session') || '';
       const res = await fetch('/api/projects', {
         headers: { 'X-Session-Id': sid },
       });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.success && data.projects && data.projects.length > 0) {
-        console.log(`[DB] 서버에서 ${data.projects.length}개 프로젝트 복구`);
-        // localStorage에 복원
-        try {
-          localStorage.setItem(DB_KEY, JSON.stringify(data.projects));
-        } catch(e) {
-          // svgPreview가 없으므로 보통 성공함
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.projects)) {
+          serverProjects = data.projects;
         }
-        updateDBBadge();
-        showToast(`서버에서 ${data.projects.length}개 프로젝트가 복구되었습니다!`, 'success');
       }
     } catch(e) {
-      console.warn('[DB] restoreFromServer error:', e.message);
+      console.warn('[DB] restoreFromServer fetch error:', e.message);
+    }
+
+    // ── 병합 전략: 서버 + 로컬을 id 기준으로 합치되, 서버를 우선 ──
+    // 로컬에만 있는(아직 서버에 동기화 안 된) 프로젝트는 보존한다.
+    const byId = new Map();
+    serverProjects.forEach(p => { if (p && p.id) byId.set(p.id, p); });
+    let localOnly = 0;
+    local.forEach(p => {
+      if (p && p.id && !byId.has(p.id)) {
+        byId.set(p.id, p);   // 서버에 없는 로컬 전용 프로젝트만 추가
+        localOnly++;
+      }
+    });
+    const merged = Array.from(byId.values());
+
+    console.log(`[DB] restore: 서버 ${serverProjects.length}개 + 로컬전용 ${localOnly}개 = ${merged.length}개`);
+
+    // localStorage 갱신 (병합 결과로 덮어씀 → 오염된 1개짜리 상태 자동 교정)
+    try {
+      localStorage.setItem(DB_KEY, JSON.stringify(merged));
+    } catch(e) {
+      // svgPreview 제거 후 재시도
+      merged.forEach(p => { if (p) p.svgPreview = ''; });
+      try { localStorage.setItem(DB_KEY, JSON.stringify(merged)); } catch(e2) {}
+    }
+
+    // 로컬에만 있던 새 프로젝트가 있으면 서버에도 백업 (서버보다 적지 않으므로 방어로직 통과)
+    if (localOnly > 0 && merged.length >= serverProjects.length) {
+      syncToServer(merged);
+    }
+
+    updateDBBadge();
+
+    // 화면 갱신: DB 목록 화면이 열려있으면 다시 렌더
+    try {
+      const dbScreen = document.getElementById('screenDB');
+      if (dbScreen && dbScreen.classList.contains('active') && typeof renderDBGrid === 'function') {
+        renderDBGrid();
+      }
+    } catch(e) {}
+
+    if (merged.length > local.length) {
+      showToast(`서버에서 ${merged.length}개 프로젝트를 불러왔습니다.`, 'success');
     }
   }
 
