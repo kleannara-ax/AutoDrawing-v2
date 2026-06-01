@@ -953,6 +953,34 @@ const App = (() => {
     showToast(`"${name}" 프로젝트가 저장되었습니다`, 'success');
   }
 
+  // 메모리 캐시: 한 번 생성한 미리보기를 재사용 (id → svg 문자열)
+  const _previewCache = {};
+
+  /**
+   * 프로젝트 카드 미리보기 보장.
+   * 1) proj.svgPreview 가 있으면 그대로 사용
+   * 2) 없으면 proj.document.elements 로부터 실시간 SVG 재생성
+   * 3) 생성 결과는 메모리 캐시에 보관 (localStorage엔 저장하지 않아 용량 영향 없음)
+   */
+  function ensurePreview(proj) {
+    if (!proj) return '';
+    if (proj.svgPreview) return proj.svgPreview;
+    if (_previewCache[proj.id]) return _previewCache[proj.id];
+    try {
+      const doc = proj.document;
+      if (doc && Array.isArray(doc.elements) && doc.elements.length > 0) {
+        const svg = generateSVGPreview(doc);
+        if (svg) {
+          _previewCache[proj.id] = svg;
+          return svg;
+        }
+      }
+    } catch(e) {
+      console.warn('[DB] 미리보기 재생성 실패:', proj.id, e.message);
+    }
+    return '';
+  }
+
   function generateSVGPreview(doc) {
     try {
       const bounds = DrawingModel.getAllBounds(doc.elements);
@@ -1183,10 +1211,13 @@ const App = (() => {
       const nameHtml = query ? _highlightMatch(proj.name, query) : escapeHtml(proj.name);
       const topClass = (query && idx === 0 && topScore > 0) ? ' search-top-match' : '';
 
+      // 미리보기: svgPreview가 없으면 document로부터 실시간 재생성
+      const previewHtml = ensurePreview(proj);
+
       return `
         <div class="db-project-card${topClass}" data-project-id="${proj.id}">
           <div class="db-card-preview">
-            ${proj.svgPreview ? proj.svgPreview : '<i class="fas fa-drafting-compass preview-placeholder"></i>'}
+            ${previewHtml ? previewHtml : '<i class="fas fa-drafting-compass preview-placeholder"></i>'}
           </div>
           <div class="db-card-body">
             <div class="db-card-name" title="${escapeHtml(proj.name)}">${nameHtml}</div>
