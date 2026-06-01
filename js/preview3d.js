@@ -163,18 +163,30 @@ const Preview3D = (() => {
     _renderer = new THREE.WebGLRenderer({ antialias: true });
     _renderer.setSize(w, h);
     _renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // 톤매핑: 강한 하이라이트가 흰색으로 날아가는(blown-out) 현상 완화
+    if (THREE.ACESFilmicToneMapping !== undefined) {
+      _renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      _renderer.toneMappingExposure = 0.95;
+    }
     _container.appendChild(_renderer.domElement);
 
-    // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+    // Lights — 부드럽고 균일한 조명으로 흰색 번쩍임(하이라이트 몰림) 방지
+    // 1) 환경광을 충분히 높여 전체를 고르게 밝힘
+    const ambient = new THREE.AmbientLight(0xffffff, 0.65);
     _scene.add(ambient);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    // 2) 하늘/바닥 반구광 — 위는 밝게, 아래는 약간 어둡게(자연스러운 음영)
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x404654, 0.45);
+    _scene.add(hemi);
+
+    // 3) 메인 방향광 — 강도를 낮춰 강한 스펙큘러 하이라이트 억제
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.45);
     dirLight.position.set(5, 8, 7);
     _scene.add(dirLight);
 
-    const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
-    dirLight2.position.set(-3, -4, -5);
+    // 4) 반대편 보조광 — 그림자 면을 채워 균일하게
+    const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.25);
+    dirLight2.position.set(-5, -3, -6);
     _scene.add(dirLight2);
 
     // Grid (XZ plane)
@@ -249,8 +261,9 @@ const Preview3D = (() => {
 
     const material = new THREE.MeshStandardMaterial({
       color: 0x9ca3af,
-      metalness: 0.4,
-      roughness: 0.5,
+      metalness: 0.1,   // 금속 반사 줄임 (번쩍임 방지)
+      roughness: 0.75,  // 표면을 무광에 가깝게 → 흰색 하이라이트 분산
+      flatShading: false,
     });
 
     const group = new THREE.Group();
@@ -637,9 +650,9 @@ const Preview3D = (() => {
     //
     const RS_PITCH_MAP = { RS25: 6.35, RS35: 9.525, RS40: 12.7, RS50: 15.875, RS60: 19.05, RS80: 25.4, RS100: 31.75, RS120: 38.1 };
 
-    const spMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.5, roughness: 0.4 });
+    const spMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.1, roughness: 0.75 });
     const boreMat = new THREE.MeshStandardMaterial({ color: 0x111118, metalness: 0.0, roughness: 1.0, side: THREE.BackSide });
-    const capMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.5, roughness: 0.4, side: THREE.DoubleSide });
+    const capMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.1, roughness: 0.75, side: THREE.DoubleSide });
 
     // 오목 필렛 포인트 생성 헬퍼
     // corner = 90° 안쪽 코너 (두 직선의 교점)
