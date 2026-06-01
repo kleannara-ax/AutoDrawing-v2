@@ -11,3 +11,5 @@ _*.js
 data/users.json
 data/teams.json
 data/*/
+data/*/backups/
+*.broken-*

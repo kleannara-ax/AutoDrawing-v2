@@ -126,6 +126,29 @@ function loadTeamProjects(teamId) {
   return loadJSON(fpath, []);
 }
 
+// 저장 전 기존 파일을 타임스탬프 백업 (롤백 안전장치)
+function backupTeamProjects(teamId, reason) {
+  const fpath = getTeamProjectsFile(teamId);
+  if (!fs.existsSync(fpath)) return null;
+  const backupDir = path.join(DATA_DIR, teamId, 'backups');
+  ensureDir(backupDir);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const bpath = path.join(backupDir, `projects-${ts}${reason ? '-' + reason : ''}.json`);
+  try {
+    fs.copyFileSync(fpath, bpath);
+    // 백업은 최근 20개만 유지
+    const files = fs.readdirSync(backupDir).filter(f => f.startsWith('projects-')).sort();
+    while (files.length > 20) {
+      const old = files.shift();
+      try { fs.unlinkSync(path.join(backupDir, old)); } catch (_) {}
+    }
+    return bpath;
+  } catch (e) {
+    console.error(`[DB] Backup failed for team ${teamId}:`, e.message);
+    return null;
+  }
+}
+
 function saveTeamProjects(teamId, projects) {
   const fpath = getTeamProjectsFile(teamId);
   ensureDir(path.dirname(fpath));
@@ -365,12 +388,38 @@ function setupAuthRoutes(app) {
   });
 
   app.post('/api/projects', requireAuth, (req, res) => {
-    const { projects } = req.body;
+    const { projects, force } = req.body;
     if (!Array.isArray(projects)) return res.status(400).json({ error: 'projects must be an array' });
     const teamId = req.session.activeTeamId || req.authUser.teamId;
+
+    // ── 데이터 손실 방어 ──
+    // 기존 프로젝트 수보다 현저히 적은 수가 들어오면(대량 삭제 의심) 거부.
+    // 정상적인 삭제는 force:true 를 함께 보내야 통과.
+    const existing = loadTeamProjects(teamId);
+    const prevCount = existing.length;
+    const newCount = projects.length;
+    const isSuspicious =
+      prevCount >= 3 &&                       // 기존에 충분히 데이터가 있고
+      newCount < prevCount &&                 // 줄어드는 방향이며
+      (newCount === 0 || newCount <= prevCount / 2) && // 절반 이하로 급감
+      !force;                                 // 명시적 강제 플래그가 없음
+
+    if (isSuspicious) {
+      console.warn(`[DB] ⚠️ 의심스러운 저장 거부 (team: ${teamId}): ${prevCount}개 → ${newCount}개. force 플래그 필요.`);
+      return res.status(409).json({
+        error: 'suspicious_bulk_delete',
+        message: `기존 ${prevCount}개에서 ${newCount}개로 급감하여 저장을 차단했습니다. 의도한 삭제라면 force:true 로 다시 요청하세요.`,
+        prevCount,
+        newCount,
+      });
+    }
+
+    // 저장 전 항상 백업 (기존 데이터가 있을 때)
+    if (prevCount > 0) backupTeamProjects(teamId, force ? 'force' : 'save');
+
     saveTeamProjects(teamId, projects);
-    console.log(`[DB] POST /api/projects (team: ${teamId}) ← ${projects.length}개 저장`);
-    res.json({ success: true, count: projects.length });
+    console.log(`[DB] POST /api/projects (team: ${teamId}) ← ${prevCount}개 → ${newCount}개 저장${force ? ' (force)' : ''}`);
+    res.json({ success: true, count: newCount });
   });
 
   return { requireAuth, getSession };
