@@ -19,15 +19,30 @@ const App = (() => {
   let _currentProjectId = null;       // DB에서 열린 프로젝트의 ID (null = 신규)
   let _previousStep = 1;              // DB 화면에서 돌아갈 때 사용
 
-  // ========== LocalStorage Key ==========
-  const DB_KEY = 'autodrawing_projects';
+  // ========== LocalStorage Key (팀별 분리) ==========
+  // 계정(팀)마다 독립된 DB를 갖도록 localStorage 키를 팀 ID로 분리한다.
+  // 예) 공무팀 → autodrawing_projects_gongmu, 패드팀 → autodrawing_projects_pad
+  const DB_KEY_PREFIX = 'autodrawing_projects';
+  function getCurrentTeamId() {
+    return (typeof window !== 'undefined' && window.__AD_TEAM_ID) ? window.__AD_TEAM_ID : 'default';
+  }
+  function getDBKey() {
+    return `${DB_KEY_PREFIX}_${getCurrentTeamId()}`;
+  }
+  // 과거 공용 키(autodrawing_projects)에 남아있을 수 있는 오염 데이터를 정리
+  function purgeLegacyDBKey() {
+    try { localStorage.removeItem(DB_KEY_PREFIX); } catch(e) {}
+  }
 
   // ========== Init ==========
   function init() {
-    // ★ v43-fix: 테스트 더미 데이터 일회성 정리
-    // localStorage에 테스트 ID(tp1~tp6)만 남아있으면 제거 후 서버에서 복구
+    // ★ 과거 공용 키(autodrawing_projects)에 팀이 섞여 저장된 오염 데이터 제거
+    // → 이게 다른 팀 계정에 22개가 흘러들어가던 원인. 팀별 키로 전환하며 정리.
+    purgeLegacyDBKey();
+
+    // ★ v43-fix: 테스트 더미 데이터 일회성 정리 (현재 팀 키 기준)
     try {
-      const _raw = localStorage.getItem(DB_KEY);
+      const _raw = localStorage.getItem(getDBKey());
       if (_raw) {
         const _arr = JSON.parse(_raw);
         const _dummyIds = ['tp1','tp2','tp3','tp4','tp5','tp6'];
@@ -36,9 +51,9 @@ const App = (() => {
           // 더미가 아닌 진짜 프로젝트만 남기기
           const _real = _arr.filter(p => !_dummyIds.includes(p.id));
           if (_real.length > 0) {
-            localStorage.setItem(DB_KEY, JSON.stringify(_real));
+            localStorage.setItem(getDBKey(), JSON.stringify(_real));
           } else {
-            localStorage.removeItem(DB_KEY); // 전부 더미면 비워서 서버 복구 유도
+            localStorage.removeItem(getDBKey()); // 전부 더미면 비워서 서버 복구 유도
           }
           console.log('[DB] 테스트 더미 데이터 정리 완료');
         }
@@ -1482,7 +1497,7 @@ const App = (() => {
 
   function loadProjects() {
     try {
-      return JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+      return JSON.parse(localStorage.getItem(getDBKey()) || '[]');
     } catch(e) {
       return [];
     }
@@ -1491,12 +1506,12 @@ const App = (() => {
   function saveProjects(projects) {
     // 1) localStorage에 저장
     try {
-      localStorage.setItem(DB_KEY, JSON.stringify(projects));
+      localStorage.setItem(getDBKey(), JSON.stringify(projects));
     } catch(e) {
       console.warn('[DB] localStorage full, trimming previews');
       projects.forEach(p => { p.svgPreview = ''; });
       try {
-        localStorage.setItem(DB_KEY, JSON.stringify(projects));
+        localStorage.setItem(getDBKey(), JSON.stringify(projects));
       } catch(e2) {
         showToast('저장 공간이 부족합니다. 오래된 프로젝트를 삭제해주세요.', 'error');
       }
@@ -1575,11 +1590,11 @@ const App = (() => {
 
     // localStorage 갱신 (병합 결과로 덮어씀 → 오염된 1개짜리 상태 자동 교정)
     try {
-      localStorage.setItem(DB_KEY, JSON.stringify(merged));
+      localStorage.setItem(getDBKey(), JSON.stringify(merged));
     } catch(e) {
       // svgPreview 제거 후 재시도
       merged.forEach(p => { if (p) p.svgPreview = ''; });
-      try { localStorage.setItem(DB_KEY, JSON.stringify(merged)); } catch(e2) {}
+      try { localStorage.setItem(getDBKey(), JSON.stringify(merged)); } catch(e2) {}
     }
 
     // 로컬에만 있던 새 프로젝트가 있으면 서버에도 백업 (서버보다 적지 않으므로 방어로직 통과)

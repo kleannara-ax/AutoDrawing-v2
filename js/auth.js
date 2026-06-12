@@ -19,6 +19,12 @@ const Auth = (() => {
     const data = await res.json();
     if (data.success) {
       _currentUser = data.user;
+      // 로그인 직후: 이전 계정/팀의 프로젝트 캐시를 모두 제거하여 데이터 혼입 방지
+      try {
+        Object.keys(localStorage)
+          .filter(k => k === 'autodrawing_projects' || k.startsWith('autodrawing_projects_'))
+          .forEach(k => localStorage.removeItem(k));
+      } catch (e) { /* ignore */ }
       localStorage.setItem('ad_session', data.sessionId);
       return { success: true, user: data.user };
     }
@@ -37,6 +43,12 @@ const Auth = (() => {
     }
     _currentUser = null;
     localStorage.removeItem('ad_session');
+    // 다른 계정 로그인 시 이전 팀 데이터가 섞이지 않도록 모든 프로젝트 캐시 제거
+    try {
+      Object.keys(localStorage)
+        .filter(k => k === 'autodrawing_projects' || k.startsWith('autodrawing_projects_'))
+        .forEach(k => localStorage.removeItem(k));
+    } catch (e) { /* ignore */ }
   }
 
   /** 세션 확인 */
