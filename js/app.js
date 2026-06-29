@@ -314,10 +314,11 @@ const App = (() => {
     Renderer.render(doc);
 
     // v5: Confidence 범례 + annotation 패널 + self-check + note
-    showConfidenceLegend(doc);
-    showSelfCheckPanel(doc);
-    showAnnotationPanel(doc);
-    showNotePanel(doc);
+    // 각 패널을 독립적으로 try-catch → 하나가 실패해도 나머지 버튼 바인딩은 정상 진행
+    try { showConfidenceLegend(doc); } catch(e){ console.error('[enterEditor] showConfidenceLegend 실패', e); }
+    try { showSelfCheckPanel(doc); } catch(e){ console.error('[enterEditor] showSelfCheckPanel 실패', e); }
+    try { showAnnotationPanel(doc); } catch(e){ console.error('[enterEditor] showAnnotationPanel 실패', e); }
+    try { showNotePanel(doc); } catch(e){ console.error('[enterEditor] showNotePanel 실패', e); }
 
     // 접기/펼치기 토글 초기화
     initCollapsibleHeaders();
@@ -1709,3 +1710,6 @@ const App = (() => {
 
   return { showToast, goToStep, openDBScreen, editCurrentParams };
 })();
+
+// 콘솔/검증용 전역 노출
+if (typeof window !== 'undefined') window.App = App;

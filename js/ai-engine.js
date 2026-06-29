@@ -3359,11 +3359,14 @@ const AIEngine = (() => {
       const cgElbowY = gBotY + 15;
       const cgArrowX = cgMidX;
       const cgArrowY = gBotY;
+      // ★ v143: 체인스프라켓(RS35 등) 주석도 그룹으로 묶어 "화살머리 고정 드래그" 지원
+      const cgGroupId = `grp_chain_${cg.id}`;
       const cgLeader1 = DrawingModel.createOutline(cgElbowX, cgElbowY, cgArrowX, cgArrowY, 0.8);
       cgLeader1.confidence = CONF.CONFIRMED;
       cgLeader1.color = '#60a5fa';
       cgLeader1._leaderLine = true;
       cgLeader1._leaderArrow = true;
+      cgLeader1._groupId = cgGroupId;
       doc.elements.push(cgLeader1);
 
       const cgLabel = `${cg.chainSpec} × PT${cg.teeth}`;
@@ -3373,11 +3376,13 @@ const AIEngine = (() => {
       cgLeader2.confidence = CONF.CONFIRMED;
       cgLeader2.color = '#60a5fa';
       cgLeader2._leaderLine = true;
+      cgLeader2._groupId = cgGroupId;
       doc.elements.push(cgLeader2);
 
       const cgTextX = (side === 'left') ? cgLeaderEnd + 2 : cgElbowX + 2;
       const cgText = DrawingModel.createText(cgTextX, cgElbowY - 2, cgLabel, 5);
       cgText.confidence = CONF.CONFIRMED;
+      cgText._groupId = cgGroupId;
       doc.elements.push(cgText);
 
       // ── 2) 보조투상도: 톱니 형상 ──

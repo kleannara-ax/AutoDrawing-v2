@@ -751,6 +751,25 @@ body {
   overflow-y: auto;
   transition: width 0.25s ease, min-width 0.25s ease;
   position: relative;
+  z-index: 30; /* 캔버스/도면 SVG 위에 항상 표시되어 버튼 클릭 보장 */
+}
+
+/* 속성 패널 내부 버튼/입력이 다른 요소에 가려지지 않도록 클릭 영역 보장 */
+.properties-panel button,
+.properties-panel input,
+.properties-panel select,
+.properties-panel .panel-section {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+#btnAddNoteLine,
+#btnEditParams,
+.note-line-input,
+.note-line-del {
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
 }
 
 /* ── 접힌 상태 ── */

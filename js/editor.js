@@ -73,6 +73,29 @@ const Editor = (() => {
     return el ? [el] : [];
   }
 
+  // ★ v143: 지시선 주석 그룹인지 판별 (KEY / TAP / 스냅링 / 관통구멍 등)
+  //   — _leaderArrow=true 인 리더선이 포함된 그룹.
+  //     이 그룹을 끌면 "화살머리(가리키는 점)는 고정"하고 텍스트·지시선만 이동시킨다.
+  function _isLeaderAnnotationGroup(groupEls) {
+    if (!groupEls || groupEls.length < 2) return false;
+    return groupEls.some(e => e._leaderArrow === true);
+  }
+
+  // ★ v143: 지시선 주석 그룹 드래그 전용 처리.
+  //   화살촉이 가리키는 점(=리더1의 (x2,y2))은 고정하고,
+  //   꺾임점·밑줄선·텍스트만 dx/dy 만큼 평행이동시켜 "연결을 유지한 채"
+  //   주석 위치만 옮긴다. → 어떤 형상을 가리키는지 정보가 보존됨.
+  function _applyLeaderGroupDelta(el, orig, dx, dy) {
+    if (el._leaderArrow === true && el.type !== 'text') {
+      // 화살표 리더선: 화살머리 끝점(x2,y2)은 고정, 꺾임점(x1,y1)만 이동
+      el.x1 = orig.x1 + dx; el.y1 = orig.y1 + dy;
+      el.x2 = orig.x2;      el.y2 = orig.y2;   // 화살머리 고정 (가리키는 점 유지)
+      return;
+    }
+    // 그 외(밑줄선 outline, 텍스트 등): 전부 평행이동
+    _applyDragDelta(el, orig, dx, dy, true);
+  }
+
   function selectElement(id) {
     _selectedId = id;
     const el = _doc.elements.find(e => e.id === id);
@@ -207,12 +230,42 @@ const Editor = (() => {
   }
 
   // ★ v120: 요소에 dx/dy 이동 적용 (그룹 드래그 + 단일 드래그 공용)
-  function _applyDragDelta(el, orig, dx, dy) {
+  //   isGroup=true (그룹 드래그)면 치수도 측정점째로 평행이동(형상과 함께 이동),
+  //   isGroup=false (단일 드래그)면 치수는 화살머리 고정 + offset만 변경.
+  function _applyDragDelta(el, orig, dx, dy, isGroup) {
     switch (el.type) {
-      case 'outline': case 'centerline': case 'hiddenline': case 'dimension':
+      case 'outline': case 'centerline': case 'hiddenline':
         el.x1 = orig.x1 + dx; el.y1 = orig.y1 + dy;
         el.x2 = orig.x2 + dx; el.y2 = orig.y2 + dy;
         break;
+      case 'dimension': {
+        if (isGroup) {
+          // 그룹(형상 전체) 이동: 측정점도 함께 이동 (기존 동작 유지)
+          el.x1 = orig.x1 + dx; el.y1 = orig.y1 + dy;
+          el.x2 = orig.x2 + dx; el.y2 = orig.y2 + dy;
+          break;
+        }
+        // ★ v141: 단일 치수 드래그 = 화살머리(측정점 x1,y1,x2,y2)는 고정,
+        //          치수선·텍스트만 측정 대상으로부터 떨어진 거리(offset)만 변경.
+        //   - 수평 치수: 마우스 세로 이동(dy)이 offset에 반영 (위/아래로 치수선 이동)
+        //   - 수직 치수: 마우스 가로 이동(dx)이 offset에 반영 (좌/우로 치수선 이동)
+        //   measurement point는 그대로 두므로 "이 치수가 무엇을 가리키는지"가 유지됨
+        const isHorizontal = Math.abs(orig.y2 - orig.y1) < Math.abs(orig.x2 - orig.x1);
+        const origOffset = (orig.offset != null) ? orig.offset : 30;
+        // 측정점은 원본 그대로 유지 (화살머리 고정)
+        el.x1 = orig.x1; el.y1 = orig.y1;
+        el.x2 = orig.x2; el.y2 = orig.y2;
+        if (isHorizontal) {
+          // 렌더: ly = min(y1,y2) - offset → 위로 가려면 offset↑.
+          //   마우스를 위로(dy<0) 끌면 치수선도 위로 → offset 증가
+          el.offset = origOffset - dy;
+        } else {
+          // 렌더: lx = min(x1,x2) - offset → 왼쪽으로 가려면 offset↑.
+          //   마우스를 왼쪽으로(dx<0) 끌면 치수선도 왼쪽 → offset 증가
+          el.offset = origOffset - dx;
+        }
+        break;
+      }
       case 'text': case 'surfacefinish':
         el.x = orig.x + dx; el.y = orig.y + dy;
         break;
@@ -319,6 +372,13 @@ const Editor = (() => {
         document.getElementById('propTolUpper').value = el.toleranceUpper || '';
         document.getElementById('propTolLower').value = el.toleranceLower || '';
       }
+
+      // ★ v141: 치수선 위치(offset) — 슬라이더 + 숫자 동기화
+      const offsetVal = (el.offset != null) ? Math.round(el.offset) : 30;
+      const offRange = document.getElementById('propDimOffset');
+      const offNum = document.getElementById('propDimOffsetNum');
+      if (offRange) offRange.value = offsetVal;
+      if (offNum) offNum.value = offsetVal;
     }
 
     // 텍스트 섹션
@@ -738,6 +798,31 @@ const Editor = (() => {
         }
       });
     });
+
+    // ★ v141: 치수선 위치(offset) 슬라이더 + 숫자 입력 — 실시간 반영
+    const offRange = document.getElementById('propDimOffset');
+    const offNum = document.getElementById('propDimOffsetNum');
+    function applyDimOffset(val, pushHistory) {
+      const selected = getSelected();
+      if (!selected || selected.type !== 'dimension') return;
+      const v = Math.round(Number(val));
+      if (isNaN(v)) return;
+      selected.offset = v;
+      if (offRange) offRange.value = v;
+      if (offNum) offNum.value = v;
+      _doc.meta.updatedAt = new Date().toISOString();
+      Renderer.render(_doc);
+      selectElement(selected.id); // 선택 하이라이트 갱신
+      if (pushHistory) History.push(_doc.elements, '치수선 위치 변경');
+    }
+    if (offRange) {
+      offRange.addEventListener('input', () => applyDimOffset(offRange.value, false));
+      offRange.addEventListener('change', () => applyDimOffset(offRange.value, true));
+    }
+    if (offNum) {
+      offNum.addEventListener('input', () => applyDimOffset(offNum.value, false));
+      offNum.addEventListener('change', () => applyDimOffset(offNum.value, true));
+    }
 
     // ── 다듬질 기호 추가 버튼 ──
     const btnAddSF = document.getElementById('btnAddSurfaceFinish');
@@ -1568,10 +1653,16 @@ const Editor = (() => {
 
       // ★ v120: 그룹 드래그 — 그룹 내 모든 요소를 동시에 이동
       if (_dragGroupOriginals && _dragGroupOriginals.length > 1) {
+        // ★ v143: 지시선 주석 그룹(KEY/TAP 등)은 "화살머리 고정 + 나머지 이동"
+        const isLeaderGroup = _isLeaderAnnotationGroup(_dragGroupOriginals);
         _dragGroupOriginals.forEach(orig => {
           const liveEl = _doc.elements.find(e => e.id === orig.id);
           if (!liveEl) return;
-          _applyDragDelta(liveEl, orig, dx, dy);
+          if (isLeaderGroup) {
+            _applyLeaderGroupDelta(liveEl, orig, dx, dy);
+          } else {
+            _applyDragDelta(liveEl, orig, dx, dy, true); // 형상 그룹: 평행이동
+          }
         });
         Renderer.render(_doc);
         const el = _doc.elements.find(e => e.id === _selectedId);
@@ -2120,3 +2211,6 @@ const Editor = (() => {
     deleteElement, moveElement,
   };
 })();
+
+// 콘솔/검증용 전역 노출 (IIFE const는 기본적으로 window에 안 붙음)
+if (typeof window !== 'undefined') window.Editor = Editor;

@@ -6,7 +6,7 @@
   <title>AutoDrawing — AI 도면 생성 + 편집 시스템</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=139">
+  <link rel="stylesheet" href="css/style.css?v=144">
 </head>
 <body>
   <div id="app">
@@ -421,6 +421,17 @@
                   <input type="text" class="form-input form-input-sm" id="propTolLower" placeholder="0.001" style="flex:1;">
                 </div>
               </div>
+
+              <!-- ★ v141: 치수선 위치(offset) 조정 — 화살머리는 고정, 치수선·숫자만 이동 -->
+              <div class="form-row" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color);align-items:center;">
+                <span class="form-label" title="화살표가 가리키는 위치는 고정하고, 치수선과 숫자만 측정 대상에서 떨어뜨립니다.">치수선 위치</span>
+                <input type="range" id="propDimOffset" min="-200" max="300" step="1" value="30" style="flex:1;accent-color:var(--accent-blue);cursor:pointer;">
+                <input type="number" class="form-input form-input-sm" id="propDimOffsetNum" step="1" style="width:64px;">
+              </div>
+              <p style="font-size:10px;color:var(--text-muted);margin-top:6px;line-height:1.5;">
+                <i class="fas fa-arrows-up-down-left-right" style="margin-right:3px;"></i>
+                도면에서 치수선을 잡고 끌면 <b>화살표 위치는 그대로</b> 둔 채 치수선·숫자만 이동합니다. (수평=상하, 수직=좌우)
+              </p>
             </div>
 
             <div class="panel-section" id="propTextSection" style="display:none;">
@@ -966,10 +977,10 @@
 
   <!-- Three.js (3D 미리보기용) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  <script src="js/three-csg.js?v=139"></script>
+  <script src="js/three-csg.js?v=144"></script>
 
   <!-- Auth -->
-  <script src="js/auth.js?v=139"></script>
+  <script src="js/auth.js?v=144"></script>
 
   <!-- 인증 체크: 세션 없으면 로그인으로 리디렉트 -->
   <script>
@@ -1013,14 +1024,14 @@
   </script>
 
   <!-- Scripts (v16: DB tab + temp save) -->
-  <script src="js/drawing-model.js?v=139"></script>
-  <script src="js/renderer.js?v=139"></script>
-  <script src="js/editor.js?v=139"></script>
-  <script src="js/history.js?v=139"></script>
-  <script src="js/export.js?v=139"></script>
-  <script src="js/ai-engine.js?v=139"></script>
-  <script src="js/image-analyzer.js?v=139"></script>
-  <script src="js/preview3d.js?v=139"></script>
-  <script src="js/app.js?v=139"></script>
+  <script src="js/drawing-model.js?v=144"></script>
+  <script src="js/renderer.js?v=144"></script>
+  <script src="js/editor.js?v=144"></script>
+  <script src="js/history.js?v=144"></script>
+  <script src="js/export.js?v=144"></script>
+  <script src="js/ai-engine.js?v=144"></script>
+  <script src="js/image-analyzer.js?v=144"></script>
+  <script src="js/preview3d.js?v=144"></script>
+  <script src="js/app.js?v=144"></script>
 </body>
 </html>
