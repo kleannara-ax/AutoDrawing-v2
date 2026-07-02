@@ -2010,20 +2010,30 @@ const AIEngine = (() => {
         }
         const grooveX2 = grooveX1 + srThickPx;
 
-        // ★ v150: 정면도 원주 홈(circumferential groove) — 참조 이미지(IVB6yE0R)와 동일
-        //   요구사항(최종):
-        //   (1) 홈 벽 세로선 2개만 그린다 (축 상면 → 축 하면 전체 관통).
-        //   (2) 축의 가로 외곽선(top/bot)은 홈 폭 구간에서 "끊긴다"(broken).
-        //       → 흰색 마스크 선을 축 외곽선 위에 덮어 홈 구간의 가로선을 지운다.
-        //   (3) 가로 노치선·d2 표시선·계단 모양은 모두 제거 (세로선 2개만 남김).
+        // ★ v151: 정면도 원주 홈(circumferential groove) — 올바른 홈 단면 표현
+        //   축 외경(d1)이 홈에서 안쪽(d2)으로 파인 형상.
+        //   구조 (상단→하단):
+        //     ──┐        ┌──   ← 축 외곽선(d1), 홈에서 끊김
+        //       │        │      ← 홈 벽 세로선 (d1 → d2, 깊이만큼)
+        //       └────────┘      ← 홈 바닥선(d2), 두 벽을 가로로 연결 (상단)
+        //       ┌────────┐      ← 홈 바닥선(d2), 두 벽을 가로로 연결 (하단)
+        //       │        │
+        //     ──┘        └──   ← 축 외곽선(d1), 홈에서 끊김
+        //   → 축 외곽선은 홈 폭에서 끊기고, 그 대신 홈 바닥(d2)을 가로선으로 연결한다.
         const SR_STROKE = 1.5;
 
-        const topY = oy - sec.r;
-        const botY = oy + sec.r;
+        const topY = oy - sec.r;   // 축 외경 상단 (d1)
+        const botY = oy + sec.r;   // 축 외경 하단 (d1)
+
+        // 홈 깊이(px) — 축 외경(d1)에서 스냅링 외경(d2)까지 (한쪽)
+        //   시인성을 위해 최소 깊이 보장.
+        const realDepthPx = grooveDepth * PX;
+        const depthPx = Math.max(realDepthPx, 7);
+        const d2TopY = topY + depthPx;   // 홈 바닥(d2) 상단 위치
+        const d2BotY = botY - depthPx;   // 홈 바닥(d2) 하단 위치
 
         // ── (a) 축 가로 외곽선을 홈 구간에서 끊기 (흰색 마스크) ──
         //   렌더 순서상 스냅링 요소가 축 외곽선보다 나중에 push되어 위에 덮인다.
-        //   흰색 굵은 선으로 top/bot 외곽선의 홈 폭 구간(grooveX1~grooveX2)을 지운다.
         const srMaskTop = DrawingModel.createOutline(grooveX1, topY, grooveX2, topY, 3);
         srMaskTop.confidence = CONF.CONFIRMED;
         srMaskTop.color = '#ffffff';
@@ -2037,16 +2047,26 @@ const AIEngine = (() => {
         srMaskBot.strokeWidth = 3;
         doc.elements.push(srMaskBot);
 
-        // ── (b) 홈 벽 세로선 2개 — 축 상면 → 축 하면 전체 관통 ──
-        //   상/하를 수평선으로 닫지 않는다 → 홈이 열린(파인) 것으로 표현.
-        //   검정 실선으로 명확히 표현 (참조 이미지와 동일) → CONFIRMED 강제.
-        const srWallL = DrawingModel.createOutline(grooveX1, topY, grooveX1, botY, SR_STROKE);
-        srWallL.confidence = CONF.CONFIRMED; doc.elements.push(srWallL);
-        const srWallR = DrawingModel.createOutline(grooveX2, topY, grooveX2, botY, SR_STROKE);
-        srWallR.confidence = CONF.CONFIRMED; doc.elements.push(srWallR);
+        // ── (b) 홈 벽 세로선 — 축 외경(d1)에서 홈 바닥(d2)까지 (깊이만큼) ──
+        //   상단: topY → d2TopY / 하단: d2BotY → botY
+        const srWallLTop = DrawingModel.createOutline(grooveX1, topY, grooveX1, d2TopY, SR_STROKE);
+        srWallLTop.confidence = CONF.CONFIRMED; doc.elements.push(srWallLTop);
+        const srWallRTop = DrawingModel.createOutline(grooveX2, topY, grooveX2, d2TopY, SR_STROKE);
+        srWallRTop.confidence = CONF.CONFIRMED; doc.elements.push(srWallRTop);
+        const srWallLBot = DrawingModel.createOutline(grooveX1, d2BotY, grooveX1, botY, SR_STROKE);
+        srWallLBot.confidence = CONF.CONFIRMED; doc.elements.push(srWallLBot);
+        const srWallRBot = DrawingModel.createOutline(grooveX2, d2BotY, grooveX2, botY, SR_STROKE);
+        srWallRBot.confidence = CONF.CONFIRMED; doc.elements.push(srWallRBot);
 
-        // 지시선 화살표가 가리킬 위치 (홈 하단 벽 근처)
-        const botGrooveTop = botY;
+        // ── (c) 홈 바닥선(d2) — 두 벽을 가로로 연결 (상/하) ──
+        //   = 스냅링 외경 d2가 앉는 홈 바닥 지름.
+        const srFloorTop = DrawingModel.createOutline(grooveX1, d2TopY, grooveX2, d2TopY, SR_STROKE);
+        srFloorTop.confidence = CONF.CONFIRMED; doc.elements.push(srFloorTop);
+        const srFloorBot = DrawingModel.createOutline(grooveX1, d2BotY, grooveX2, d2BotY, SR_STROKE);
+        srFloorBot.confidence = CONF.CONFIRMED; doc.elements.push(srFloorBot);
+
+        // 지시선 화살표가 가리킬 위치 (홈 하단 바닥선)
+        const botGrooveTop = d2BotY;
 
         // ★ v39: 지시선 텍스트에 직경 + 두께 함께 표시
         const grooveMidX = (grooveX1 + grooveX2) / 2;
