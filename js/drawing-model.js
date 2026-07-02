@@ -395,6 +395,94 @@ const DrawingModel = (() => {
   };
 
   /**
+   * KS B 1336 축용 C형 멈춤링(스냅링) 규격 테이블
+   *   d1 = 적용 축지름(호칭, mm)
+   *   d2 = 홈 지름(스냅링 외경, 기준치수 mm)
+   *   m  = 홈 폭(스냅링 두께, 기준치수 mm)
+   *   (허용차 n 최소값은 이 앱에서 사용하지 않아 생략)
+   *
+   * 사용법: SNAP_RING_KS_TABLE[d1] → { d2, m } (없으면 undefined)
+   * 유효 범위: d1 최소 10 ~ 최대 95 (규격에 존재하는 값만 매칭)
+   */
+  const SNAP_RING_KS_TABLE = {
+    10: { d2: 9.6,  m: 1.15 },
+    11: { d2: 10.5, m: 1.15 },
+    12: { d2: 11.5, m: 1.15 },
+    13: { d2: 12.4, m: 1.15 },
+    14: { d2: 13.4, m: 1.15 },
+    15: { d2: 14.3, m: 1.15 },
+    16: { d2: 15.2, m: 1.35 },
+    17: { d2: 16.2, m: 1.35 },
+    18: { d2: 17.0, m: 1.35 },
+    19: { d2: 18.0, m: 1.35 },
+    20: { d2: 19.0, m: 1.35 },
+    21: { d2: 20.0, m: 1.35 },
+    22: { d2: 21.0, m: 1.35 },
+    24: { d2: 22.9, m: 1.35 },
+    25: { d2: 23.9, m: 1.35 },
+    26: { d2: 24.9, m: 1.35 },
+    28: { d2: 26.6, m: 1.75 },
+    29: { d2: 27.6, m: 1.75 },
+    30: { d2: 28.6, m: 1.75 },
+    32: { d2: 30.3, m: 1.75 },
+    34: { d2: 32.3, m: 1.75 },
+    35: { d2: 33.0, m: 1.95 },
+    36: { d2: 34.0, m: 1.95 },
+    38: { d2: 36.0, m: 1.95 },
+    40: { d2: 38.0, m: 1.95 },
+    42: { d2: 39.5, m: 1.95 },
+    45: { d2: 42.5, m: 1.95 },
+    48: { d2: 45.5, m: 1.95 },
+    50: { d2: 47.0, m: 2.2 },
+    52: { d2: 49.0, m: 2.2 },
+    55: { d2: 52.0, m: 2.2 },
+    56: { d2: 53.0, m: 2.2 },
+    58: { d2: 55.0, m: 2.2 },
+    60: { d2: 57.0, m: 2.2 },
+    62: { d2: 59.0, m: 2.2 },
+    63: { d2: 60.0, m: 2.2 },
+    65: { d2: 62.0, m: 2.7 },
+    68: { d2: 65.0, m: 2.7 },
+    70: { d2: 67.0, m: 2.7 },
+    72: { d2: 69.0, m: 2.7 },
+    75: { d2: 72.0, m: 2.7 },
+    78: { d2: 75.0, m: 2.7 },
+    80: { d2: 76.5, m: 2.7 },
+    82: { d2: 78.5, m: 2.7 },
+    85: { d2: 81.5, m: 3.2 },
+    88: { d2: 84.5, m: 3.2 },
+    90: { d2: 86.5, m: 3.2 },
+    95: { d2: 91.5, m: 3.2 },
+  };
+
+  const SNAP_RING_D1_MIN = 10;
+  const SNAP_RING_D1_MAX = 95;
+
+  /**
+   * 축지름(d1)으로 KS B 1336 스냅링 규격을 조회한다.
+   * @param {number} shaftDiameter - 축지름 d1 (mm)
+   * @returns {object} 결과
+   *   - found=true:  { found:true, d1, d2, m }
+   *   - found=false: { found:false, reason:'too_small'|'too_large'|'not_standard', d1, min, max }
+   */
+  function lookupSnapRingByShaft(shaftDiameter) {
+    const d1 = Math.round(Number(shaftDiameter) * 100) / 100; // 소수 오차 정리
+    const min = SNAP_RING_D1_MIN, max = SNAP_RING_D1_MAX;
+    if (isNaN(d1)) {
+      return { found: false, reason: 'not_standard', d1: shaftDiameter, min, max };
+    }
+    if (d1 < min) return { found: false, reason: 'too_small', d1, min, max };
+    if (d1 > max) return { found: false, reason: 'too_large', d1, min, max };
+    // 정확히 일치하는 규격만 허용 (23, 51, 93 등 기준 사이값은 실패)
+    const key = Math.round(d1);
+    const rec = (key === d1) ? SNAP_RING_KS_TABLE[key] : undefined;
+    if (rec) {
+      return { found: true, d1: key, d2: rec.d2, m: rec.m };
+    }
+    return { found: false, reason: 'not_standard', d1, min, max };
+  }
+
+  /**
    * 다듬질 기호 (Surface Finish Symbol)
    *
    * @param {number} x - 기호 위치 X (부착 면의 중간점)
@@ -699,6 +787,8 @@ const DrawingModel = (() => {
     createAuxiliaryView,
     createSurfaceFinish,
     SURFACE_FINISH_TABLE,
+    SNAP_RING_KS_TABLE,
+    lookupSnapRingByShaft,
     createGeometricTolerance,
     createDatum,
     createBreakLine,

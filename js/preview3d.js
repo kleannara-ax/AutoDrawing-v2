@@ -291,9 +291,10 @@ const Preview3D = (() => {
     const THREAD_PITCH = { 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0, 20: 2.5, 24: 3.0 };
     const tapFeatures = (hiddenFeatures || []).filter(hf => hf.type === 'tap-bore');
     const keywayFeatures = (hiddenFeatures || []).filter(hf => hf.type === 'keyway');
+    const snapRingFeatures = (hiddenFeatures || []).filter(hf => hf.type === 'snapring');
 
     // CSG 사용 가능 여부 확인
-    const useCSG = (typeof CSG !== 'undefined') && (tapFeatures.length > 0 || keywayFeatures.length > 0);
+    const useCSG = (typeof CSG !== 'undefined') && (tapFeatures.length > 0 || keywayFeatures.length > 0 || snapRingFeatures.length > 0);
 
     // 구간별 Y 오프셋 맵
     const sectionYMap = {};
@@ -611,6 +612,69 @@ const Preview3D = (() => {
             }
           } catch (e) {
             console.warn('CSG keyway subtract failed:', e);
+          }
+        });
+
+        // ── 스냅링 홈(snap ring groove) CSG subtract ──
+        // 축 둘레를 감싸는 얇은 링(ring) 형태의 홈을 파낸다.
+        //   홈 깊이 = (구간 외경 − 스냅링 외경) / 2  → 바닥 반지름 = srDiam/2
+        //   홈 폭(축 방향) = 스냅링 두께(m)
+        //   절삭 도구 = 바깥 원통(축 표면보다 살짝 큼) − 안쪽 원통(홈 바닥) = 링
+        snapRingFeatures.forEach(hf => {
+          if (hf.section !== secObj.secId) return;
+
+          const secData = sections.find(s => s.id === hf.section);
+          if (!secData) return;
+
+          const secDiamMm = secData.diameter || 20;
+          const srDiamMm = hf.snapRingDiam;      // 홈 바닥 지름 (d2)
+          const srThickMm = hf.snapRingThickness; // 홈 폭 (m)
+          const sectionLenMm = secData.length || 1;
+          if (!(srDiamMm > 0) || !(srThickMm > 0)) return;
+
+          const grooveDepthMm = (secDiamMm - srDiamMm) / 2;
+          if (grooveDepthMm <= 0) return; // 홈이 축보다 크면 스킵
+
+          const secR = (secDiamMm / 2) * scale;
+          const bottomR = (srDiamMm / 2) * scale;     // 홈 바닥 반지름
+          const grooveW = srThickMm * scale;          // 축 방향 폭
+          const outerR = secR + 0.05;                 // 축 표면보다 살짝 크게 (클린 컷)
+
+          // 홈 Y 중심 위치 (좌측 오프셋 우선 → 우측 오프셋 → 중앙)
+          const hasLeftOff = hf.snapRingLeftOffset != null && !isNaN(hf.snapRingLeftOffset);
+          const hasRightOff = hf.snapRingRightOffset != null && !isNaN(hf.snapRingRightOffset);
+          let grooveYCenter;
+          if (hasLeftOff) {
+            grooveYCenter = secInfo.yStart + (hf.snapRingLeftOffset + srThickMm / 2) * scale;
+          } else if (hasRightOff) {
+            grooveYCenter = secInfo.yEnd - (hf.snapRingRightOffset + srThickMm / 2) * scale;
+          } else {
+            grooveYCenter = (secInfo.yStart + secInfo.yEnd) / 2;
+          }
+
+          try {
+            // 바깥 원통 (축 방향 = Y, CylinderGeometry는 기본 Y축 정렬)
+            const outerGeo = new THREE.CylinderGeometry(outerR, outerR, grooveW + 0.001, SEGMENTS_RADIAL, 1, false);
+            const outerMesh = new THREE.Mesh(outerGeo, material);
+            outerMesh.position.set(0, grooveYCenter, 0);
+            outerMesh.updateMatrix();
+            let ringCSG = CSG.fromMesh(outerMesh);
+            outerGeo.dispose();
+
+            // 안쪽 원통 (홈 바닥) — 관통되도록 폭을 넉넉히
+            const innerGeo = new THREE.CylinderGeometry(bottomR, bottomR, grooveW + 0.02, SEGMENTS_RADIAL, 1, false);
+            const innerMesh = new THREE.Mesh(innerGeo, material);
+            innerMesh.position.set(0, grooveYCenter, 0);
+            innerMesh.updateMatrix();
+            const innerCSG = CSG.fromMesh(innerMesh);
+            innerGeo.dispose();
+
+            // 링 = 바깥 − 안쪽
+            const toolCSG = ringCSG.subtract(innerCSG);
+            currentCSG = currentCSG.subtract(toolCSG);
+            hasSubtraction = true;
+          } catch (e) {
+            console.warn('CSG snapring groove subtract failed:', e);
           }
         });
 

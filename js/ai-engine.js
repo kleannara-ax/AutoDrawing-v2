@@ -2009,10 +2009,12 @@ const AIEngine = (() => {
         }
         const grooveX2 = grooveX1 + srThickPx;
 
-        // ★ v39: 스냅링 홈 + 실선 2줄 + 지시선(직경+두께)
-        const SR_STROKE = 1;  // v39: 홈 두께 1로 통일
+        // ★ v146: 스냅링을 참조 규격도(igdoQV5B)처럼 "직사각형 함몰 홈" 프로파일로 표현
+        //   축 외곽선이 홈 위치에서 안쪽으로 step-down → 바닥(폭 m) → step-up 복귀
+        //   상/하 대칭. 홈을 가로지르는 관통 수직선은 그리지 않음(실제 홈처럼 보이게).
+        const SR_STROKE = 1.5;  // v146: 외곽선과 동일한 굵기로 홈 윤곽 강조
 
-        // 상단 홈 (축 상면에서 안쪽으로) — U자 형태
+        // 상단 홈: 축 상면 → 아래(앞벽) → 바닥 → 위(뒷벽) → 축 상면 (U자, ⊔)
         const topY = oy - sec.r;
         const topGrooveBottom = topY + grooveDepthPx;
         const tL = DrawingModel.createOutline(grooveX1, topY, grooveX1, topGrooveBottom, SR_STROKE);
@@ -2022,7 +2024,7 @@ const AIEngine = (() => {
         const tR = DrawingModel.createOutline(grooveX2, topGrooveBottom, grooveX2, topY, SR_STROKE);
         tR.confidence = hf.confidence; doc.elements.push(tR);
 
-        // 하단 홈 (축 하면에서 안쪽으로 — 대칭) — ∩자 형태
+        // 하단 홈 (대칭, ∩자, ⊓)
         const botY = oy + sec.r;
         const botGrooveTop = botY - grooveDepthPx;
         const bL = DrawingModel.createOutline(grooveX1, botY, grooveX1, botGrooveTop, SR_STROKE);
@@ -2032,12 +2034,8 @@ const AIEngine = (() => {
         const bR = DrawingModel.createOutline(grooveX2, botGrooveTop, grooveX2, botY, SR_STROKE);
         bR.confidence = hf.confidence; doc.elements.push(bR);
 
-        // ★ v39: 홈에서 홈까지 두께 1 실선 2줄 (좌측 수직선, 우측 수직선)
-        //   상단 홈 바닥 → 하단 홈 바닥을 연결하는 수직 실선 2개
-        const srLineL = DrawingModel.createOutline(grooveX1, topGrooveBottom, grooveX1, botGrooveTop, 1);
-        srLineL.confidence = hf.confidence; doc.elements.push(srLineL);
-        const srLineR = DrawingModel.createOutline(grooveX2, topGrooveBottom, grooveX2, botGrooveTop, 1);
-        srLineR.confidence = hf.confidence; doc.elements.push(srLineR);
+        // v146: 홈을 가로지르는 관통 수직 실선 2개(srLineL/srLineR)는 제거.
+        //   → 축 외곽선이 실제로 step-down한 "함몰 홈"으로 보이도록 함.
 
         // ★ v39: 지시선 텍스트에 직경 + 두께 함께 표시
         const grooveMidX = (grooveX1 + grooveX2) / 2;

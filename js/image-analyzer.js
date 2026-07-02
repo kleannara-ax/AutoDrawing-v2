@@ -645,9 +645,18 @@ const ImageAnalyzer = (() => {
           chkR.addEventListener('change', function() { valR.style.display = chkR.checked ? 'inline-block' : 'none'; });
         }
 
-        // 직경 변경 시 중공축 외경 자동 업데이트
+        // 직경 변경 시 중공축 외경 자동 업데이트 + 스냅링 자동 규격 재계산
         sectionInputsDiv.querySelectorAll('.sec-diameter').forEach(el => {
           el.addEventListener('input', updateHollowOuterDiam);
+          ['input', 'change'].forEach(evt => el.addEventListener(evt, () => {
+            if (typeof refreshAllSnapRingBlocks === 'function') refreshAllSnapRingBlocks();
+          }));
+        });
+        // 길이 변경 시 스냅링 우측 오프셋 자동 재계산
+        sectionInputsDiv.querySelectorAll('.sec-length').forEach(el => {
+          ['input', 'change'].forEach(evt => el.addEventListener(evt, () => {
+            if (typeof refreshAllSnapRingBlocks === 'function') refreshAllSnapRingBlocks();
+          }));
         });
 
         // 중공축 외경 자동 표시 업데이트
@@ -770,60 +779,235 @@ const ImageAnalyzer = (() => {
         keywayCountInput.addEventListener(evt, onKeywayCountChange);
       });
 
-      // ── 스냅링 동적 입력 빌더 ──
+      // ── 스냅링 동적 입력 빌더 (KS B 1336 C형 멈춤링 자동 선택) ──
+      // 선택한 구간(S#)의 축지름/축길이를 읽어온다.
+      function _getSectionDims(secVal) {
+        if (!secVal) return { diam: NaN, length: NaN };
+        const idx = parseInt(String(secVal).replace(/^S/i, ''), 10) - 1;
+        if (isNaN(idx) || idx < 0) return { diam: NaN, length: NaN };
+        const diamEl = sectionInputsDiv.querySelector(`.sec-diameter[data-idx="${idx}"]`);
+        const lenEl = sectionInputsDiv.querySelector(`.sec-length[data-idx="${idx}"]`);
+        return {
+          diam: diamEl ? parseFloat(diamEl.value) : NaN,
+          length: lenEl ? parseFloat(lenEl.value) : NaN,
+        };
+      }
+
+      // 블록 하나의 자동/수동 상태를 다시 계산해서 표시한다.
+      function refreshSnapRingBlock(k) {
+        const block = snapRingInputsDiv.querySelector(`.sr-block[data-sr-idx="${k}"]`);
+        if (!block) return;
+        const secVal = block.querySelector('.sr-sec')?.value || '';
+        const { diam: shaftDiam, length: shaftLen } = _getSectionDims(secVal);
+
+        const autoBox = block.querySelector('.sr-auto-box');
+        const noSpecBox = block.querySelector('.sr-nospec-box');
+        const manualBox = block.querySelector('.sr-manual-box');
+        const infoLine = block.querySelector('.sr-info-line');
+
+        // 구간 미선택 상태
+        if (!secVal || isNaN(shaftDiam)) {
+          block.setAttribute('data-sr-mode', 'none');
+          if (autoBox) autoBox.style.display = 'none';
+          if (noSpecBox) noSpecBox.style.display = 'none';
+          if (manualBox) manualBox.style.display = 'none';
+          if (infoLine) infoLine.textContent = secVal
+            ? `⚠ ${secVal} 구간의 직경을 먼저 입력하세요.`
+            : '구간을 선택하면 축지름에 따라 자동으로 스냅링 규격이 선택됩니다.';
+          _updateSnapRingRightOffset(k);
+          return;
+        }
+
+        const lookup = (typeof DrawingModel !== 'undefined' && DrawingModel.lookupSnapRingByShaft)
+          ? DrawingModel.lookupSnapRingByShaft(shaftDiam)
+          : { found: false, reason: 'not_standard', d1: shaftDiam, min: 10, max: 95 };
+
+        if (lookup.found) {
+          // 자동 모드: KS 규격에서 외경(d2)·두께(m) 자동 선택
+          block.setAttribute('data-sr-mode', 'auto');
+          if (autoBox) autoBox.style.display = 'block';
+          if (noSpecBox) noSpecBox.style.display = 'none';
+          if (manualBox) manualBox.style.display = 'none';
+
+          const d2El = block.querySelector('.sr-auto-d2');
+          const mEl = block.querySelector('.sr-auto-m');
+          const d1El = block.querySelector('.sr-auto-d1');
+          if (d1El) d1El.value = lookup.d1;
+          if (d2El) d2El.value = lookup.d2;
+          if (mEl) mEl.value = lookup.m;
+          // 자동 계산값을 hidden 데이터로 저장 (collectFormData에서 사용)
+          block.setAttribute('data-sr-diam', lookup.d2);
+          block.setAttribute('data-sr-thick', lookup.m);
+
+          if (infoLine) infoLine.textContent =
+            `✔ 축지름 ${lookup.d1} → 스냅링 외경 ${lookup.d2}Ø · 두께 ${lookup.m}t (KS B 1336)`;
+        } else {
+          // 규격 외: "규격에 없습니다" + 수동 입력 노출
+          block.setAttribute('data-sr-mode', 'manual');
+          block.removeAttribute('data-sr-diam');
+          block.removeAttribute('data-sr-thick');
+          if (autoBox) autoBox.style.display = 'none';
+          if (noSpecBox) noSpecBox.style.display = 'block';
+          if (manualBox) manualBox.style.display = 'block';
+
+          const reasonMsg = block.querySelector('.sr-nospec-reason');
+          if (reasonMsg) {
+            let msg;
+            if (lookup.reason === 'too_small') msg = `축지름 ${lookup.d1} < 최소 ${lookup.min}`;
+            else if (lookup.reason === 'too_large') msg = `축지름 ${lookup.d1} > 최대 ${lookup.max}`;
+            else msg = `축지름 ${lookup.d1} 은(는) 규격 기준값이 아닙니다`;
+            reasonMsg.textContent = `(${msg})`;
+          }
+          if (infoLine) infoLine.textContent = '규격에 없어 수동으로 외경·두께를 입력합니다.';
+        }
+        _updateSnapRingRightOffset(k);
+      }
+
+      // 우측 이격 자동 계산: 축길이 − (두께 + 좌측 이격)
+      function _updateSnapRingRightOffset(k) {
+        const block = snapRingInputsDiv.querySelector(`.sr-block[data-sr-idx="${k}"]`);
+        if (!block) return;
+        const secVal = block.querySelector('.sr-sec')?.value || '';
+        const { length: shaftLen } = _getSectionDims(secVal);
+        const mode = block.getAttribute('data-sr-mode');
+
+        let thick = NaN;
+        if (mode === 'auto') {
+          thick = parseFloat(block.getAttribute('data-sr-thick'));
+        } else if (mode === 'manual') {
+          thick = parseFloat(block.querySelector('.sr-thick')?.value);
+        }
+        const leftOff = parseFloat(block.querySelector('.sr-left-off')?.value);
+        const rightEl = block.querySelector('.sr-right-off');
+        if (!rightEl) return;
+
+        if (!isNaN(shaftLen) && !isNaN(thick) && !isNaN(leftOff)) {
+          const right = shaftLen - (thick + leftOff);
+          rightEl.value = Math.round(right * 100) / 100;
+          rightEl.style.color = right < 0 ? '#f87171' : '#34d399';
+          const warn = block.querySelector('.sr-right-warn');
+          if (warn) warn.style.display = right < 0 ? 'block' : 'none';
+        } else {
+          rightEl.value = '';
+          const warn = block.querySelector('.sr-right-warn');
+          if (warn) warn.style.display = 'none';
+        }
+      }
+
       function buildSnapRingInputs(srCount) {
         snapRingInputsDiv.innerHTML = '';
         const secCount = parseInt(countInput.value) || 0;
 
         for (let k = 0; k < srCount; k++) {
           const block = document.createElement('div');
+          block.className = 'sr-block';
+          block.setAttribute('data-sr-idx', k);
+          block.setAttribute('data-sr-mode', 'none');
           block.style.cssText = 'background:#1e2230; border:1px solid #be185d; border-radius:8px; padding:12px;';
-          
+
           let secOptions = '<option value="">없음</option>';
           for (let s = 0; s < secCount; s++) {
             secOptions += `<option value="S${s + 1}">S${s + 1}</option>`;
           }
 
           block.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
               <label style="font-size:12px; color:#f472b6; font-weight:600;">스냅링 ${k + 1}</label>
-              <select class="sr-sec" data-sr-idx="${k}" style="width:60px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+              <span style="font-size:10px; color:#6b7280;">적용 구간</span>
+              <select class="sr-sec" data-sr-idx="${k}" style="width:70px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
                 ${secOptions}
               </select>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
-              <div>
-                <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">스냅링 외경 (mm)</label>
-                <input type="number" class="sr-diam" data-sr-idx="${k}" placeholder="예: 17" step="0.1"
-                  style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
-              </div>
-              <div>
-                <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">두께 (mm)</label>
-                <input type="number" class="sr-thick" data-sr-idx="${k}" placeholder="예: 1.5" step="0.1"
-                  style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+
+            <div class="sr-info-line" style="font-size:10px; color:#93c5fd; margin-bottom:8px; line-height:1.4;">
+              구간을 선택하면 축지름에 따라 자동으로 스냅링 규격이 선택됩니다.
+            </div>
+
+            <!-- 좌측 이격 (사용자 입력) -->
+            <div style="margin-bottom:6px;">
+              <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">좌측 오프셋 (mm) — 구간 좌측에서 스냅링까지 거리</label>
+              <input type="number" class="sr-left-off" data-sr-idx="${k}" placeholder="예: 5" step="0.1"
+                style="width:100%; padding:6px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:13px;">
+            </div>
+
+            <!-- 자동 선택 결과 (읽기 전용) -->
+            <div class="sr-auto-box" style="display:none; background:#152029; border:1px solid #0e7490; border-radius:6px; padding:8px; margin-bottom:6px;">
+              <div style="font-size:10px; color:#22d3ee; margin-bottom:4px; font-weight:600;">▽ KS B 1336 자동 선택 (허용차 무시)</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
+                <div>
+                  <label style="font-size:9px; color:#6b7280; display:block; margin-bottom:2px;">축지름 d1</label>
+                  <input type="number" class="sr-auto-d1" data-sr-idx="${k}" readonly
+                    style="width:100%; padding:5px; background:#0f1620; border:1px solid #2b3340; border-radius:6px; color:#94a3b8; font-size:12px;">
+                </div>
+                <div>
+                  <label style="font-size:9px; color:#22d3ee; display:block; margin-bottom:2px;">외경 d2</label>
+                  <input type="number" class="sr-auto-d2" data-sr-idx="${k}" readonly
+                    style="width:100%; padding:5px; background:#0f1620; border:1px solid #0e7490; border-radius:6px; color:#67e8f9; font-size:12px; font-weight:600;">
+                </div>
+                <div>
+                  <label style="font-size:9px; color:#22d3ee; display:block; margin-bottom:2px;">두께 m</label>
+                  <input type="number" class="sr-auto-m" data-sr-idx="${k}" readonly
+                    style="width:100%; padding:5px; background:#0f1620; border:1px solid #0e7490; border-radius:6px; color:#67e8f9; font-size:12px; font-weight:600;">
+                </div>
               </div>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-              <div>
-                <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">좌측 이격 (mm)</label>
-                <input type="number" class="sr-left-off" data-sr-idx="${k}" placeholder="좌측에서 거리" step="0.1"
-                  style="width:100%; padding:5px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:12px;">
-              </div>
-              <div>
-                <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">우측 이격 (mm)</label>
-                <input type="number" class="sr-right-off" data-sr-idx="${k}" placeholder="우측에서 거리" step="0.1"
-                  style="width:100%; padding:5px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:12px;">
+
+            <!-- 규격 외 안내 배너 -->
+            <div class="sr-nospec-box" style="display:none; background:#2a1215; border:1px solid #b91c1c; border-radius:6px; padding:8px; margin-bottom:6px;">
+              <div style="font-size:12px; color:#fca5a5; font-weight:700;">⚠ 규격에 없습니다</div>
+              <div class="sr-nospec-reason" style="font-size:10px; color:#f87171; margin-top:2px;"></div>
+              <div style="font-size:10px; color:#94a3b8; margin-top:3px;">아래에서 외경·두께를 직접 입력하세요.</div>
+            </div>
+
+            <!-- 수동 입력 (규격 외일 때만 노출) -->
+            <div class="sr-manual-box" style="display:none; margin-bottom:6px;">
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                <div>
+                  <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">스냅링 외경 (mm)</label>
+                  <input type="number" class="sr-diam" data-sr-idx="${k}" placeholder="예: 17" step="0.1"
+                    style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+                </div>
+                <div>
+                  <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">두께 (mm)</label>
+                  <input type="number" class="sr-thick" data-sr-idx="${k}" placeholder="예: 1.5" step="0.1"
+                    style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+                </div>
               </div>
             </div>
-            <div style="font-size:10px; color:#6b7280; margin-top:4px;">
+
+            <!-- 우측 이격 (자동 계산, 읽기 전용) -->
+            <div>
+              <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">우측 오프셋 (mm) — 자동 계산: 축길이 − (두께 + 좌측 오프셋)</label>
+              <input type="number" class="sr-right-off" data-sr-idx="${k}" placeholder="자동 계산" readonly
+                style="width:100%; padding:6px; background:#151b12; border:1px solid #554a20; border-radius:6px; color:#34d399; font-size:13px;">
+              <div class="sr-right-warn" style="display:none; font-size:10px; color:#f87171; margin-top:2px;">
+                ⚠ 우측 오프셋이 음수입니다. 좌측 오프셋 또는 축길이를 확인하세요.
+              </div>
+            </div>
+
+            <div style="font-size:10px; color:#6b7280; margin-top:6px;">
               * 홈 깊이 = (구간 외경 − 스냅링 외경) / 2
             </div>
           `;
           snapRingInputsDiv.appendChild(block);
+
+          // 이벤트 바인딩
+          const secSel = block.querySelector('.sr-sec');
+          const leftOffEl = block.querySelector('.sr-left-off');
+          const manualDiamEl = block.querySelector('.sr-diam');
+          const manualThickEl = block.querySelector('.sr-thick');
+
+          ['input', 'change'].forEach(evt => {
+            secSel && secSel.addEventListener(evt, () => refreshSnapRingBlock(k));
+            leftOffEl && leftOffEl.addEventListener(evt, () => _updateSnapRingRightOffset(k));
+            manualThickEl && manualThickEl.addEventListener(evt, () => _updateSnapRingRightOffset(k));
+          });
+
+          refreshSnapRingBlock(k);
         }
       }
 
-      // 구간 수 변경 시 스냅링 select 옵션 업데이트
+      // 구간 수 변경 시 스냅링 select 옵션 업데이트 + 자동값 재계산
       function updateSnapRingSelects(secCount) {
         snapRingInputsDiv.querySelectorAll('.sr-sec').forEach(sel => {
           const val = sel.value;
@@ -832,6 +1016,15 @@ const ImageAnalyzer = (() => {
             sel.innerHTML += `<option value="S${s + 1}">S${s + 1}</option>`;
           }
           sel.value = val;
+          const blk = sel.closest('.sr-block');
+          if (blk) refreshSnapRingBlock(parseInt(blk.getAttribute('data-sr-idx'), 10));
+        });
+      }
+
+      // 구간 직경/길이 변경 시 스냅링 자동값 갱신 (전역 재계산)
+      function refreshAllSnapRingBlocks() {
+        snapRingInputsDiv.querySelectorAll('.sr-block').forEach(blk => {
+          refreshSnapRingBlock(parseInt(blk.getAttribute('data-sr-idx'), 10));
         });
       }
 
@@ -1284,10 +1477,17 @@ const ImageAnalyzer = (() => {
             buildSnapRingInputs(pd.snapRings.length);
             pd.snapRings.forEach((sr, k) => {
               const sel = snapRingInputsDiv.querySelector(`.sr-sec[data-sr-idx="${k}"]`); if (sel && sr.section) sel.value = sr.section;
-              const dEl = snapRingInputsDiv.querySelector(`.sr-diam[data-sr-idx="${k}"]`); if (dEl && sr.diam) dEl.value = sr.diam;
-              const tEl = snapRingInputsDiv.querySelector(`.sr-thick[data-sr-idx="${k}"]`); if (tEl && sr.thickness) tEl.value = sr.thickness;
               const loEl = snapRingInputsDiv.querySelector(`.sr-left-off[data-sr-idx="${k}"]`); if (loEl && sr.leftOffset != null) loEl.value = sr.leftOffset;
-              const roEl = snapRingInputsDiv.querySelector(`.sr-right-off[data-sr-idx="${k}"]`); if (roEl && sr.rightOffset != null) roEl.value = sr.rightOffset;
+              // 구간 선택 → 자동/수동 상태 재구성 (자동값 계산)
+              refreshSnapRingBlock(k);
+              // 수동 모드(규격 외)일 때만 저장된 외경·두께 복원
+              const blk = snapRingInputsDiv.querySelector(`.sr-block[data-sr-idx="${k}"]`);
+              if (blk && blk.getAttribute('data-sr-mode') === 'manual') {
+                const dEl = blk.querySelector('.sr-diam'); if (dEl && sr.diam) dEl.value = sr.diam;
+                const tEl = blk.querySelector('.sr-thick'); if (tEl && sr.thickness) tEl.value = sr.thickness;
+              }
+              // 우측 오프셋 재계산
+              _updateSnapRingRightOffset(k);
             });
           }
 
@@ -1613,12 +1813,31 @@ const ImageAnalyzer = (() => {
         const srCount = parseInt(snapRingCountInput.value) || 0;
         console.log('[collectFormData] snapRing count:', srCount);
         for (let k = 0; k < srCount; k++) {
-          const srSec = snapRingInputsDiv.querySelector(`.sr-sec[data-sr-idx="${k}"]`)?.value || '';
-          const srDiam = parseFloat(snapRingInputsDiv.querySelector(`.sr-diam[data-sr-idx="${k}"]`)?.value);
-          const srThick = parseFloat(snapRingInputsDiv.querySelector(`.sr-thick[data-sr-idx="${k}"]`)?.value);
-          const srLeftOff = parseFloat(snapRingInputsDiv.querySelector(`.sr-left-off[data-sr-idx="${k}"]`)?.value);
-          const srRightOff = parseFloat(snapRingInputsDiv.querySelector(`.sr-right-off[data-sr-idx="${k}"]`)?.value);
-          console.log(`[collectFormData] SR[${k}]: sec=${srSec}, diam=${srDiam}, thick=${srThick}, leftOff=${srLeftOff}, rightOff=${srRightOff}`);
+          const block = snapRingInputsDiv.querySelector(`.sr-block[data-sr-idx="${k}"]`);
+          const srSec = block?.querySelector('.sr-sec')?.value || '';
+          const srMode = block?.getAttribute('data-sr-mode') || 'none';
+
+          // 외경·두께: 자동 모드는 KS 규격 자동값(블록 속성), 수동 모드는 입력값
+          let srDiam, srThick;
+          if (srMode === 'auto') {
+            srDiam = parseFloat(block.getAttribute('data-sr-diam'));
+            srThick = parseFloat(block.getAttribute('data-sr-thick'));
+          } else {
+            srDiam = parseFloat(block?.querySelector('.sr-diam')?.value);
+            srThick = parseFloat(block?.querySelector('.sr-thick')?.value);
+          }
+
+          const srLeftOff = parseFloat(block?.querySelector('.sr-left-off')?.value);
+          // 우측 오프셋: 축길이 − (두께 + 좌측 오프셋) 자동 계산 (이미 필드에 채워져 있음)
+          let srRightOff = parseFloat(block?.querySelector('.sr-right-off')?.value);
+          if (isNaN(srRightOff) && !isNaN(srLeftOff) && srThick > 0) {
+            // 필드가 비어있으면 구간 길이로 직접 계산
+            const secIdx = parseInt(String(srSec).replace(/^S/i, ''), 10) - 1;
+            const lenEl = sectionInputsDiv.querySelector(`.sec-length[data-idx="${secIdx}"]`);
+            const shaftLen = lenEl ? parseFloat(lenEl.value) : NaN;
+            if (!isNaN(shaftLen)) srRightOff = Math.round((shaftLen - (srThick + srLeftOff)) * 100) / 100;
+          }
+          console.log(`[collectFormData] SR[${k}]: sec=${srSec}, mode=${srMode}, diam=${srDiam}, thick=${srThick}, leftOff=${srLeftOff}, rightOff=${srRightOff}`);
 
           if (srSec && srDiam > 0 && srThick > 0) {
             hiddenFeatures.push({
