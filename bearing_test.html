@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Bearing Render Test</title>
+</head>
+<body style="background:#1e293b;">
+<svg id="drawingSvg" width="1050" height="742" xmlns="http://www.w3.org/2000/svg">
+  <g id="drawingLayer"></g>
+</svg>
+<script src="/js/drawing-model.js"></script>
+<script src="/js/ai-engine.js"></script>
+<script src="/js/renderer.js"></script>
+<script>
+window.addEventListener('load', () => {
+  try {
+    const CONF = AIEngine.CONF, PLACEHOLDER = AIEngine.PLACEHOLDER;
+    const spec = {
+      geometrySpec: {
+        sections: [
+          { id:'S1', length:60, lengthConf:CONF.CONFIRMED, diameter:45, diameterConf:CONF.CONFIRMED, note:null },
+          { id:'S2', length:30, lengthConf:CONF.CONFIRMED, diameter:50, diameterConf:CONF.CONFIRMED, note:null },
+          { id:'S3', length:27, lengthConf:CONF.CONFIRMED, diameter:50, diameterConf:CONF.CONFIRMED, note:null },
+        ],
+        totalLength:117, totalLengthConf:CONF.CONFIRMED,
+        holes:[], slots:[], chamferPositions:[], centerHolePositions:[],
+        hiddenFeatures:[{
+          id:'HF_BR1', section:'S3', type:'bearing', bearingDesignation:'6310',
+          bearingBore:50, bearingOuter:110, bearingWidth:27, bearingFillet:2,
+          bearingLeftOffset:0, bearingRightOffset:null, bearingForcedFit:false,
+          confidence:CONF.CONFIRMED,
+        }],
+      },
+      annotationSpec:{
+        partName:PLACEHOLDER.TEXT, partNo:PLACEHOLDER.TEXT, material:PLACEHOLDER.EMPTY,
+        materialConf:CONF.UNCERTAIN, surfaceFinish:PLACEHOLDER.EMPTY, surfaceFinishConf:CONF.UNCERTAIN,
+        unit:'mm', scale:'1:1', projectionMethod:'3각법', paperSize:'A3',
+        chamferSpecs:[], keywaySpecs:[], tapSpecs:[], centerHoleDiameters:[], notes:[],
+      },
+      auxiliaryViews:[], geometricTolerances:[], uncertainElements:[],
+    };
+    const doc = AIEngine.generateFromCustomSpec(spec);
+    console.log('TEST: doc.elements =', doc.elements.length);
+    const brEls = doc.elements.filter(e => e._groupId && String(e._groupId).includes('bear'));
+    console.log('TEST: bearing elements =', brEls.length);
+
+    // Renderer is a bare top-level const global
+    const R = (typeof Renderer !== 'undefined') ? Renderer : null;
+    console.log('TEST: renderer =', R ? Object.keys(R).join(',') : 'NONE');
+    if (R) {
+      R.init(document.getElementById('drawingSvg'));
+      R.render(doc);
+      console.log('TEST: render() called OK');
+    }
+
+    // Count actually-rendered SVG elements in each group
+    setTimeout(() => {
+      ['outlinesGroup','holesGroup','hatchingGroup','textsGroup','dimensionsGroup'].forEach(gid => {
+        const g = document.getElementById(gid);
+        console.log('TEST: group', gid, '=', g ? g.childNodes.length : 'MISSING');
+      });
+      // dump bearing outline bounding box to prove it's on-canvas
+      const holes = document.getElementById('holesGroup');
+      if (holes) {
+        holes.querySelectorAll('circle:not([fill=transparent])').forEach(c => {
+          console.log('TEST: BALL circle cy=' + c.getAttribute('cy') + ' r=' + c.getAttribute('r'));
+        });
+      }
+    }, 500);
+  } catch(e) {
+    console.log('TEST FATAL:', e.message, e.stack);
+  }
+});
+</script>
+</body>
+</html>
