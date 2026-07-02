@@ -461,22 +461,24 @@ const Renderer = (() => {
     }
     g.appendChild(circle);
 
-    // 십자 표시 (중심점)
+    // 십자 표시 (중심점) — ★ v156: _noCross면 생략 (베어링 볼처럼 깨끗한 원)
     const cx = el.cx, cy = el.cy;
-    const cm = r * 0.4;
-    const crossH = createSvgElement('line');
-    crossH.setAttribute('x1', cx - cm); crossH.setAttribute('y1', cy);
-    crossH.setAttribute('x2', cx + cm); crossH.setAttribute('y2', cy);
-    crossH.setAttribute('stroke', el.color || '#a78bfa');
-    crossH.setAttribute('stroke-width', 0.5);
-    g.appendChild(crossH);
+    if (!el._noCross) {
+      const cm = r * 0.4;
+      const crossH = createSvgElement('line');
+      crossH.setAttribute('x1', cx - cm); crossH.setAttribute('y1', cy);
+      crossH.setAttribute('x2', cx + cm); crossH.setAttribute('y2', cy);
+      crossH.setAttribute('stroke', el.color || '#a78bfa');
+      crossH.setAttribute('stroke-width', 0.5);
+      g.appendChild(crossH);
 
-    const crossV = createSvgElement('line');
-    crossV.setAttribute('x1', cx); crossV.setAttribute('y1', cy - cm);
-    crossV.setAttribute('x2', cx); crossV.setAttribute('y2', cy + cm);
-    crossV.setAttribute('stroke', el.color || '#a78bfa');
-    crossV.setAttribute('stroke-width', 0.5);
-    g.appendChild(crossV);
+      const crossV = createSvgElement('line');
+      crossV.setAttribute('x1', cx); crossV.setAttribute('y1', cy - cm);
+      crossV.setAttribute('x2', cx); crossV.setAttribute('y2', cy + cm);
+      crossV.setAttribute('stroke', el.color || '#a78bfa');
+      crossV.setAttribute('stroke-width', 0.5);
+      g.appendChild(crossV);
+    }
 
     // 탭 표기 라벨
     if (el.tapSpec) {
