@@ -1816,6 +1816,37 @@ const ImageAnalyzer = (() => {
             });
           }
 
+          // 베어링(깊은 홈 볼베어링) — v158: 저장/복원 누락 버그 수정
+          if (pd.bearings && pd.bearings.length > 0) {
+            bearingCountInput.value = pd.bearings.length;
+            buildBearingInputs(pd.bearings.length);
+            pd.bearings.forEach((br, k) => {
+              const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${k}"]`);
+              if (!block) return;
+              // 1) 구간 선택
+              const secSel = block.querySelector('.br-sec');
+              if (secSel && br.section) secSel.value = br.section;
+              // 2) 호칭번호 입력 → refreshBearingBlock 이 규격표에서 d/D/B/r 재조회 + data 속성 재설정
+              const desigEl = block.querySelector('.br-desig');
+              if (desigEl && br.designation) desigEl.value = br.designation;
+              // 3) 좌측 오프셋 복원
+              const loEl = block.querySelector('.br-left-off');
+              if (loEl && br.leftOffset != null) loEl.value = br.leftOffset;
+              // 4) 규격 재조회 (d/D/B/r 및 data-br-* 속성, 축지름 일치검사 재구성)
+              refreshBearingBlock(k);
+              // 5) 규격표에 없는 호칭이면(수동) 저장된 원본 치수를 data 속성으로 직접 복원
+              if (block.getAttribute('data-br-fit') === 'invalid' && br.outer > 0 && br.width > 0) {
+                block.setAttribute('data-br-D', br.outer);
+                block.setAttribute('data-br-d', br.bore);
+                block.setAttribute('data-br-B', br.width);
+                block.setAttribute('data-br-r', br.fillet || 0);
+                block.setAttribute('data-br-fit', br.forcedFit ? 'forced' : 'ok');
+              }
+              // 6) 우측 오프셋 재계산
+              if (typeof _updateBearingRightOffset === 'function') _updateBearingRightOffset(k);
+            });
+          }
+
           // 체인스프라켓
           if (pd.chainGears && pd.chainGears.length > 0) {
             chainGearCountInput.value = pd.chainGears.length;
@@ -2504,6 +2535,22 @@ const ImageAnalyzer = (() => {
         section: th.section,
         diameter: th.diameter,
         offset: th.offsetFromLeft,
+      }));
+    }
+
+    // 베어링(깊은 홈 볼베어링) — v158: 저장/복원 누락 버그 수정
+    const brFeatures = hfs.filter(h => h.type === 'bearing');
+    if (brFeatures.length > 0) {
+      pd.bearings = brFeatures.map(br => ({
+        section: br.section,
+        designation: br.bearingDesignation,
+        bore: br.bearingBore,       // d
+        outer: br.bearingOuter,     // D
+        width: br.bearingWidth,     // B
+        fillet: br.bearingFillet,   // r
+        leftOffset: br.bearingLeftOffset,
+        rightOffset: br.bearingRightOffset,
+        forcedFit: !!br.bearingForcedFit,
       }));
     }
 
