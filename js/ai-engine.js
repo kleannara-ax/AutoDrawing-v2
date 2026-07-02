@@ -1994,12 +1994,15 @@ const AIEngine = (() => {
         console.log(`[AI-Engine] SNAPRING ${hf.id}: grooveDepth=${grooveDepth}, will render=${grooveDepth > 0 && srThick > 0}`);
         if (grooveDepth <= 0 || srThick <= 0) return; // forEach 내부이므로 return
 
-        // 홈 폭(축 방향)은 실제 두께 m 사용 (최소 시인성 폭만 보장)
-        const realThickPx = srThick * PX;
-        const srThickPx = Math.max(realThickPx, 6);
+        // 홈 폭(축 방향) — 위치 계산과 동일한 구간 스케일(sPX_sr)로 통일해야
+        //   전체 길이 대비 실제 두께 m 비율이 정확히 반영된다.
+        //   ★ v153: 이전엔 전역 PX + 최소 6px 클램프로 실제 2.2mm보다 ~3배 넓게 그려졌음.
+        //   실제 비율(2.2/전체길이)에 맞추되, 너무 얇아 사라지지 않도록 최소 폭만 살짝 보장.
+        const sPX_sr = secPX(sec);
+        const realThickPx = srThick * sPX_sr;
+        const srThickPx = Math.max(realThickPx, 2.5);   // 최소 시인성 폭 (과장 최소화)
 
         // 홈 X 좌표 계산 (좌측 offset 우선, 없으면 우측 offset)
-        const sPX_sr = secPX(sec);
         let grooveX1;
         if (srLeftOff != null && !isNaN(srLeftOff)) {
           grooveX1 = sec.x + srLeftOff * sPX_sr;
@@ -2033,7 +2036,9 @@ const AIEngine = (() => {
         const stepPx = Math.max(realDepthPx, 5);   // 계단 깊이
         const shTopY = topY + stepPx;   // 상단 계단 아래 (홈 벽 세로선 시작)
         const shBotY = botY - stepPx;   // 하단 계단 위  (홈 벽 세로선 끝)
-        const stepOut = Math.max(stepPx * 1.1, 5);  // 계단 가로 폭 (홈 폭 바깥으로 나온 어깨)
+        // 계단 가로 폭 — 홈 폭에 비례(과장 방지). 홈이 얇아도 계단이 홈을 잡아먹지 않도록
+        //   홈 폭의 절반 수준으로 제한하고 최소 시인성만 보장.
+        const stepOut = Math.min(Math.max(srThickPx * 0.6, 2.5), stepPx * 1.1);
 
         // ── (a) 긴 세로선 2개(홈 벽) — 축 거의 전체 높이 관통 ──
         //   ※ 이 세로선은 절대 지우지 않는다 (사용자 핵심 요구).
