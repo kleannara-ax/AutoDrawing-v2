@@ -807,6 +807,13 @@ const AIEngine = (() => {
           } else {
             warnings.push(`숨은선 ${hf.id}: 관통 구멍 직경 불완전`);
           }
+        } else if (hf.type === 'bearing') {
+          // bearing: bearingOuter(D), bearingBore(d), bearingWidth(B) 필수
+          if (hf.bearingOuter > 0 && hf.bearingBore > 0 && hf.bearingWidth > 0) {
+            geometryScore.matched++;
+          } else {
+            warnings.push(`숨은선 ${hf.id}: 베어링 치수(D/d/B) 불완전`);
+          }
         } else {
           // 기타 type도 section 소속 확인만
           geometryScore.matched++;
@@ -2123,6 +2130,148 @@ const AIEngine = (() => {
         srText.confidence = CONF.CONFIRMED;
         srText._groupId = srGroupId;  // v110
         doc.elements.push(srText);
+
+      } else if (hf.type === 'bearing') {
+        // ── 깊은 홈 볼베어링 단면도 (v154) ──
+        //   참조 이미지(6rbhFBcx): 폭 B × 전체높이 D 의 직사각형이 중심선(oy) 대칭.
+        //   상/하 링 단면(bore d/2 ~ outer D/2)에 해칭, 각 링 중앙에 볼 원,
+        //   외곽 모서리·내륜 어깨는 필렛 r 로 라운드. 치수: B(상단), φd/φD(우측).
+        const brB = hf.bearingWidth;      // 폭 (mm, 축방향)
+        const brD = hf.bearingOuter;      // 외경 (mm)
+        const brd = hf.bearingBore;       // 내경 (mm)
+        const brR = hf.bearingFillet || 0; // 필렛 (mm)
+        const brLeftOff = hf.bearingLeftOffset;
+        const brRightOff = hf.bearingRightOffset;
+        console.log(`[AI-Engine] BEARING ${hf.id}: desig=${hf.bearingDesignation}, B=${brB}, D=${brD}, d=${brd}, r=${brR}, leftOff=${brLeftOff}, rightOff=${brRightOff}, forced=${hf.bearingForcedFit}`);
+        if (!(brB > 0) || !(brD > 0) || !(brd > 0)) return;
+
+        const sPX_br = secPX(sec);
+        const bWpx = brB * sPX_br;              // 폭 (px)
+        const rOut = brD / 2 * PX;              // 외경 반지름 (px) — 세로 스케일은 전역 PX
+        const rBore = brd / 2 * PX;             // 내경 반지름 (px)
+        const filPx = Math.min(brR * PX, bWpx / 3, (rOut - rBore) / 3); // 필렛 px (과도 방지)
+
+        // X 위치: 좌측 오프셋 우선, 없으면 우측 오프셋, 둘 다 없으면 구간 중심
+        let bX1;
+        if (brLeftOff != null && !isNaN(brLeftOff)) {
+          bX1 = sec.x + brLeftOff * sPX_br;
+        } else if (brRightOff != null && !isNaN(brRightOff)) {
+          bX1 = sec.x + sec.w - brRightOff * sPX_br - bWpx;
+        } else {
+          bX1 = sec.x + sec.w / 2 - bWpx / 2;
+        }
+        const bX2 = bX1 + bWpx;
+
+        // 세로 경계 Y (중심선 oy 대칭)
+        const yOutTop = oy - rOut;   // 외경 상단
+        const yOutBot = oy + rOut;   // 외경 하단
+        const yBoreTop = oy - rBore; // 내경 상단 (bore 상단 = 축과 접촉면)
+        const yBoreBot = oy + rBore; // 내경 하단
+
+        const BR_STROKE = 1.2;
+        const brColor = '#000000';
+        const brGroupId = `grp_bear_${hf.id}`;
+
+        // (0) 베어링 폭 구간의 기존 축 외곽선을 흰색 마스크로 지움 (렌더 순서상 베어링이 나중)
+        const brMaskTop = DrawingModel.createOutline(bX1, oy - sec.r, bX2, oy - sec.r, 3);
+        brMaskTop.color = '#ffffff'; brMaskTop._mask = true; brMaskTop.strokeWidth = 3;
+        brMaskTop.confidence = CONF.CONFIRMED; doc.elements.push(brMaskTop);
+        const brMaskBot = DrawingModel.createOutline(bX1, oy + sec.r, bX2, oy + sec.r, 3);
+        brMaskBot.color = '#ffffff'; brMaskBot._mask = true; brMaskBot.strokeWidth = 3;
+        brMaskBot.confidence = CONF.CONFIRMED; doc.elements.push(brMaskBot);
+
+        // 헬퍼: 외곽선 push
+        const pushLine = (x1, y1, x2, y2, arc) => {
+          const el = DrawingModel.createOutline(x1, y1, x2, y2, BR_STROKE);
+          el.color = brColor; el.confidence = CONF.CONFIRMED; el._groupId = brGroupId;
+          if (arc) el._arc = arc;
+          doc.elements.push(el);
+          return el;
+        };
+
+        // (1) 외경 상/하 수평선 (외륜 바깥면) — 필렛만큼 안쪽에서 시작
+        pushLine(bX1 + filPx, yOutTop, bX2 - filPx, yOutTop);
+        pushLine(bX1 + filPx, yOutBot, bX2 - filPx, yOutBot);
+        // (2) 외경 좌/우 수직선 (외륜 측면) — 필렛만큼 안쪽에서 시작
+        pushLine(bX1, yOutTop + filPx, bX1, yOutBot - filPx);
+        pushLine(bX2, yOutTop + filPx, bX2, yOutBot - filPx);
+        // (2b) 외곽 4모서리 필렛 (r)
+        if (filPx > 0.5) {
+          pushLine(bX1 + filPx, yOutTop, bX1, yOutTop + filPx, { cx: bX1 + filPx, cy: yOutTop + filPx, r: filPx, sweep: 1 }); // 좌상
+          pushLine(bX2 - filPx, yOutTop, bX2, yOutTop + filPx, { cx: bX2 - filPx, cy: yOutTop + filPx, r: filPx, sweep: 0 }); // 우상
+          pushLine(bX1 + filPx, yOutBot, bX1, yOutBot - filPx, { cx: bX1 + filPx, cy: yOutBot - filPx, r: filPx, sweep: 0 }); // 좌하
+          pushLine(bX2 - filPx, yOutBot, bX2, yOutBot - filPx, { cx: bX2 - filPx, cy: yOutBot - filPx, r: filPx, sweep: 1 }); // 우하
+        }
+        // (3) 내경(bore) 상/하 수평선 (내륜 안쪽면 = 축 접촉면)
+        pushLine(bX1 + filPx, yBoreTop, bX2 - filPx, yBoreTop);
+        pushLine(bX1 + filPx, yBoreBot, bX2 - filPx, yBoreBot);
+        // (3b) 내륜 어깨 필렛
+        if (filPx > 0.5) {
+          pushLine(bX1, yBoreTop - filPx, bX1 + filPx, yBoreTop, { cx: bX1 + filPx, cy: yBoreTop - filPx, r: filPx, sweep: 0 });
+          pushLine(bX2 - filPx, yBoreTop, bX2, yBoreTop - filPx, { cx: bX2 - filPx, cy: yBoreTop - filPx, r: filPx, sweep: 1 });
+          pushLine(bX1, yBoreBot + filPx, bX1 + filPx, yBoreBot, { cx: bX1 + filPx, cy: yBoreBot + filPx, r: filPx, sweep: 1 });
+          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot + filPx, { cx: bX2 - filPx, cy: yBoreBot + filPx, r: filPx, sweep: 0 });
+        } else {
+          pushLine(bX1, yBoreTop, bX1 + filPx, yBoreTop);
+          pushLine(bX2 - filPx, yBoreTop, bX2, yBoreTop);
+          pushLine(bX1, yBoreBot, bX1 + filPx, yBoreBot);
+          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot);
+        }
+
+        // (4) 상/하 링 단면 해칭 (외경 상단 ~ 내경 상단 사이 = 절단된 금속)
+        const htchTop = DrawingModel.createHatch(
+          [{ x: bX1, y: yOutTop }, { x: bX2, y: yOutTop }, { x: bX2, y: yBoreTop }, { x: bX1, y: yBoreTop }],
+          45, 4);
+        htchTop.confidence = CONF.CONFIRMED; htchTop._groupId = brGroupId; doc.elements.push(htchTop);
+        const htchBot = DrawingModel.createHatch(
+          [{ x: bX1, y: yBoreBot }, { x: bX2, y: yBoreBot }, { x: bX2, y: yOutBot }, { x: bX1, y: yOutBot }],
+          -45, 4);
+        htchBot.confidence = CONF.CONFIRMED; htchBot._groupId = brGroupId; doc.elements.push(htchBot);
+
+        // (5) 볼 원 (상/하 링 중앙) — 볼 직경 ≈ (외경-내경)*0.45, 지름은 링 두께 안에 맞춤
+        const ballCX = (bX1 + bX2) / 2;
+        const ringMid = (rOut + rBore) / 2;             // 중심선~링중앙 (px)
+        const ballDia = Math.min((rOut - rBore) * 0.9, bWpx * 0.75);
+        if (ballDia > 2) {
+          const ballTop = DrawingModel.createHole(ballCX, oy - ringMid, ballDia, null, 'through');
+          ballTop.color = brColor; ballTop.confidence = CONF.CONFIRMED; ballTop._groupId = brGroupId;
+          doc.elements.push(ballTop);
+          const ballBot = DrawingModel.createHole(ballCX, oy + ringMid, ballDia, null, 'through');
+          ballBot.color = brColor; ballBot.confidence = CONF.CONFIRMED; ballBot._groupId = brGroupId;
+          doc.elements.push(ballBot);
+        }
+
+        // (6) 치수 — B (상단 폭), φD / φd (우측)
+        const bDimY = yOutTop - 12;
+        const bDim = DrawingModel.createDimension(bX1, bDimY, bX2, bDimY, brB, ann.unit || 'mm', 0);
+        bDim.confidence = CONF.CONFIRMED; bDim._groupId = brGroupId; doc.elements.push(bDim);
+
+        const dimX_D = bX2 + 28;
+        const dDimD = DrawingModel.createDiameterDimension(dimX_D, yOutTop, dimX_D, yOutBot, brD, ann.unit || 'mm', 0);
+        dDimD.confidence = CONF.CONFIRMED; dDimD._groupId = brGroupId; doc.elements.push(dDimD);
+        const dimX_d = bX2 + 14;
+        const dDimd = DrawingModel.createDiameterDimension(dimX_d, yBoreTop, dimX_d, yBoreBot, brd, ann.unit || 'mm', 0);
+        dDimd.confidence = CONF.CONFIRMED; dDimd._groupId = brGroupId; doc.elements.push(dDimd);
+
+        // (7) 지시선 + 라벨 (호칭번호, 필요시 억지 끼워맞춤)
+        const brLabel = `깊은홈 볼베어링 ${hf.bearingDesignation}`
+          + (hf.bearingForcedFit ? ' (억지 끼워맞춤)' : '');
+        const brElbowX = ballCX - 20;
+        const brElbowY = yOutBot + 26;
+        const brLeader1 = DrawingModel.createOutline(brElbowX, brElbowY, ballCX, oy + ringMid, 0.8);
+        brLeader1.confidence = CONF.CONFIRMED; brLeader1.color = '#60a5fa';
+        brLeader1._leaderLine = true; brLeader1._leaderArrow = true; brLeader1._groupId = brGroupId;
+        doc.elements.push(brLeader1);
+        const brTextW = brLabel.length * 3.0;
+        const brLeader2 = DrawingModel.createOutline(brElbowX, brElbowY, brElbowX + brTextW + 3, brElbowY, 0.8);
+        brLeader2.confidence = CONF.CONFIRMED; brLeader2.color = '#60a5fa';
+        brLeader2._leaderLine = true; brLeader2._groupId = brGroupId;
+        doc.elements.push(brLeader2);
+        const brText = DrawingModel.createText(brElbowX + 2, brElbowY - 2, brLabel, 5);
+        brText.confidence = CONF.CONFIRMED;
+        brText.color = hf.bearingForcedFit ? '#f87171' : '#60a5fa';
+        brText._groupId = brGroupId;
+        doc.elements.push(brText);
 
       } else if (hf.type === 'through-hole') {
         // ── 관통 구멍: 수직 숨은선 2개 (중심 대칭) — 축을 관통 ──

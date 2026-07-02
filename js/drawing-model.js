@@ -482,6 +482,170 @@ const DrawingModel = (() => {
     return { found: false, reason: 'not_standard', d1, min, max };
   }
 
+  // ============================================================
+  // 깊은 홈 볼베어링 규격 — KS B 2023 (60/62/63/64 계열)
+  //   호칭번호(designation) → { d(안지름), D(바깥지름), B(폭), r(필렛 min) }
+  //   PDF "깊은 홈 볼베어링 KS 규격" 표에서 추출.
+  // ============================================================
+  const DEEP_GROOVE_BEARING_TABLE = {
+    // ── 60 계열 ──
+    '601.5': { d: 1.5, D: 6,   B: 2.5, r: 0.15, series: 60 },
+    '602':   { d: 2,   D: 7,   B: 2.8, r: 0.15, series: 60 },
+    '60/2.5':{ d: 2.5, D: 8,   B: 2.8, r: 0.15, series: 60 },
+    '603':   { d: 3,   D: 9,   B: 3,   r: 0.15, series: 60 },
+    '604':   { d: 4,   D: 12,  B: 4,   r: 0.2,  series: 60 },
+    '605':   { d: 5,   D: 14,  B: 5,   r: 0.2,  series: 60 },
+    '606':   { d: 6,   D: 17,  B: 6,   r: 0.3,  series: 60 },
+    '607':   { d: 7,   D: 19,  B: 6,   r: 0.3,  series: 60 },
+    '608':   { d: 8,   D: 22,  B: 7,   r: 0.3,  series: 60 },
+    '609':   { d: 9,   D: 24,  B: 7,   r: 0.3,  series: 60 },
+    '6000':  { d: 10,  D: 26,  B: 8,   r: 0.3,  series: 60 },
+    '6001':  { d: 12,  D: 28,  B: 8,   r: 0.3,  series: 60 },
+    '6002':  { d: 15,  D: 32,  B: 9,   r: 0.3,  series: 60 },
+    '6003':  { d: 17,  D: 35,  B: 10,  r: 0.3,  series: 60 },
+    '6004':  { d: 20,  D: 42,  B: 12,  r: 0.6,  series: 60 },
+    '60/22': { d: 22,  D: 44,  B: 12,  r: 0.6,  series: 60 },
+    '6005':  { d: 25,  D: 47,  B: 12,  r: 0.6,  series: 60 },
+    '60/28': { d: 28,  D: 52,  B: 12,  r: 0.6,  series: 60 },
+    '6006':  { d: 30,  D: 55,  B: 13,  r: 1,    series: 60 },
+    '60/32': { d: 32,  D: 58,  B: 13,  r: 1,    series: 60 },
+    '6007':  { d: 35,  D: 62,  B: 14,  r: 1,    series: 60 },
+    '6008':  { d: 40,  D: 68,  B: 15,  r: 1,    series: 60 },
+    '6009':  { d: 45,  D: 75,  B: 16,  r: 1,    series: 60 },
+    '6010':  { d: 50,  D: 80,  B: 16,  r: 1,    series: 60 },
+    '6011':  { d: 55,  D: 90,  B: 18,  r: 1.1,  series: 60 },
+    '6012':  { d: 60,  D: 95,  B: 18,  r: 1.1,  series: 60 },
+    '6013':  { d: 65,  D: 100, B: 18,  r: 1.1,  series: 60 },
+    '6014':  { d: 70,  D: 110, B: 20,  r: 1.1,  series: 60 },
+    '6015':  { d: 75,  D: 115, B: 20,  r: 1.1,  series: 60 },
+    '6016':  { d: 80,  D: 125, B: 22,  r: 1.1,  series: 60 },
+    '6017':  { d: 85,  D: 130, B: 22,  r: 1.1,  series: 60 },
+    '6018':  { d: 90,  D: 140, B: 24,  r: 1.5,  series: 60 },
+    '6019':  { d: 95,  D: 145, B: 24,  r: 1.5,  series: 60 },
+    '6020':  { d: 100, D: 150, B: 24,  r: 1.5,  series: 60 },
+    '6021':  { d: 105, D: 160, B: 26,  r: 2,    series: 60 },
+    '6022':  { d: 110, D: 170, B: 28,  r: 2,    series: 60 },
+    // ── 62 계열 ──
+    '623':   { d: 3,   D: 10,  B: 4,   r: 0.15, series: 62 },
+    '624':   { d: 4,   D: 13,  B: 5,   r: 0.2,  series: 62 },
+    '625':   { d: 5,   D: 16,  B: 5,   r: 0.3,  series: 62 },
+    '626':   { d: 6,   D: 19,  B: 6,   r: 0.3,  series: 62 },
+    '627':   { d: 7,   D: 22,  B: 7,   r: 0.3,  series: 62 },
+    '628':   { d: 8,   D: 24,  B: 8,   r: 0.3,  series: 62 },
+    '629':   { d: 9,   D: 26,  B: 8,   r: 0.3,  series: 62 },
+    '6200':  { d: 10,  D: 30,  B: 9,   r: 0.6,  series: 62 },
+    '6201':  { d: 12,  D: 32,  B: 10,  r: 0.6,  series: 62 },
+    '6202':  { d: 15,  D: 35,  B: 11,  r: 0.6,  series: 62 },
+    '6203':  { d: 17,  D: 40,  B: 12,  r: 0.6,  series: 62 },
+    '6204':  { d: 20,  D: 47,  B: 14,  r: 1,    series: 62 },
+    '62/22': { d: 22,  D: 50,  B: 14,  r: 1,    series: 62 },
+    '6205':  { d: 25,  D: 52,  B: 15,  r: 1,    series: 62 },
+    '62/28': { d: 28,  D: 58,  B: 16,  r: 1,    series: 62 },
+    '6206':  { d: 30,  D: 62,  B: 16,  r: 1,    series: 62 },
+    '62/32': { d: 32,  D: 65,  B: 17,  r: 1,    series: 62 },
+    '6207':  { d: 35,  D: 72,  B: 17,  r: 1.1,  series: 62 },
+    '6208':  { d: 40,  D: 80,  B: 18,  r: 1.1,  series: 62 },
+    '6209':  { d: 45,  D: 85,  B: 19,  r: 1.1,  series: 62 },
+    '6210':  { d: 50,  D: 90,  B: 20,  r: 1.1,  series: 62 },
+    '6211':  { d: 55,  D: 100, B: 21,  r: 1.5,  series: 62 },
+    '6212':  { d: 60,  D: 110, B: 22,  r: 1.5,  series: 62 },
+    '6213':  { d: 65,  D: 120, B: 23,  r: 1.5,  series: 62 },
+    '6214':  { d: 70,  D: 125, B: 24,  r: 1.5,  series: 62 },
+    '6215':  { d: 75,  D: 130, B: 25,  r: 1.5,  series: 62 },
+    '6216':  { d: 80,  D: 140, B: 26,  r: 2,    series: 62 },
+    '6217':  { d: 85,  D: 150, B: 28,  r: 2,    series: 62 },
+    '6218':  { d: 90,  D: 160, B: 30,  r: 2,    series: 62 },
+    '6219':  { d: 95,  D: 170, B: 32,  r: 2.1,  series: 62 },
+    '6220':  { d: 100, D: 180, B: 34,  r: 2.1,  series: 62 },
+    '6221':  { d: 105, D: 190, B: 36,  r: 2.1,  series: 62 },
+    '6222':  { d: 110, D: 200, B: 38,  r: 2.1,  series: 62 },
+    '6224':  { d: 120, D: 215, B: 40,  r: 2.1,  series: 62 },
+    '6226':  { d: 130, D: 230, B: 40,  r: 3,    series: 62 },
+    '6228':  { d: 140, D: 250, B: 42,  r: 3,    series: 62 },
+    // ── 63 계열 ──
+    '633':   { d: 3,   D: 13,  B: 5,   r: 0.2,  series: 63 },
+    '634':   { d: 4,   D: 16,  B: 5,   r: 0.3,  series: 63 },
+    '635':   { d: 5,   D: 19,  B: 6,   r: 0.3,  series: 63 },
+    '636':   { d: 6,   D: 22,  B: 7,   r: 0.3,  series: 63 },
+    '637':   { d: 7,   D: 26,  B: 9,   r: 0.3,  series: 63 },
+    '638':   { d: 8,   D: 28,  B: 9,   r: 0.3,  series: 63 },
+    '639':   { d: 9,   D: 30,  B: 10,  r: 0.6,  series: 63 },
+    '6300':  { d: 10,  D: 35,  B: 11,  r: 0.6,  series: 63 },
+    '6301':  { d: 12,  D: 37,  B: 12,  r: 1,    series: 63 },
+    '6302':  { d: 15,  D: 42,  B: 13,  r: 1,    series: 63 },
+    '6303':  { d: 17,  D: 47,  B: 14,  r: 1,    series: 63 },
+    '6304':  { d: 20,  D: 52,  B: 15,  r: 1.1,  series: 63 },
+    '63/22': { d: 22,  D: 56,  B: 16,  r: 1.1,  series: 63 },
+    '6305':  { d: 25,  D: 62,  B: 17,  r: 1.1,  series: 63 },
+    '63/28': { d: 28,  D: 68,  B: 18,  r: 1.1,  series: 63 },
+    '6306':  { d: 30,  D: 72,  B: 19,  r: 1.1,  series: 63 },
+    '63/32': { d: 32,  D: 75,  B: 20,  r: 1.1,  series: 63 },
+    '6307':  { d: 35,  D: 80,  B: 21,  r: 1.5,  series: 63 },
+    '6308':  { d: 40,  D: 90,  B: 23,  r: 1.5,  series: 63 },
+    '6309':  { d: 45,  D: 100, B: 25,  r: 1.5,  series: 63 },
+    '6310':  { d: 50,  D: 110, B: 27,  r: 2,    series: 63 },
+    '6311':  { d: 55,  D: 120, B: 29,  r: 2,    series: 63 },
+    '6312':  { d: 60,  D: 130, B: 31,  r: 2.1,  series: 63 },
+    '6313':  { d: 65,  D: 140, B: 33,  r: 2.1,  series: 63 },
+    '6314':  { d: 70,  D: 150, B: 35,  r: 2.1,  series: 63 },
+    '6315':  { d: 75,  D: 160, B: 37,  r: 2.1,  series: 63 },
+    '6316':  { d: 80,  D: 170, B: 39,  r: 2.1,  series: 63 },
+    '6317':  { d: 85,  D: 180, B: 41,  r: 3,    series: 63 },
+    '6318':  { d: 90,  D: 190, B: 43,  r: 3,    series: 63 },
+    '6319':  { d: 95,  D: 200, B: 45,  r: 3,    series: 63 },
+    '6320':  { d: 100, D: 215, B: 47,  r: 3,    series: 63 },
+    '6321':  { d: 105, D: 225, B: 49,  r: 3,    series: 63 },
+    '6322':  { d: 110, D: 240, B: 50,  r: 3,    series: 63 },
+    '6324':  { d: 120, D: 260, B: 55,  r: 3,    series: 63 },
+    '6326':  { d: 130, D: 280, B: 58,  r: 4,    series: 63 },
+    '6328':  { d: 140, D: 300, B: 62,  r: 4,    series: 63 },
+    // ── 64 계열 ──
+    '648':   { d: 8,   D: 30,  B: 10,  r: 0.6,  series: 64 },
+    '649':   { d: 9,   D: 32,  B: 11,  r: 0.6,  series: 64 },
+    '6400':  { d: 10,  D: 37,  B: 12,  r: 0.6,  series: 64 },
+    '6401':  { d: 12,  D: 42,  B: 13,  r: 1,    series: 64 },
+    '6402':  { d: 15,  D: 52,  B: 15,  r: 1.1,  series: 64 },
+    '6403':  { d: 17,  D: 62,  B: 17,  r: 1.1,  series: 64 },
+    '6404':  { d: 20,  D: 72,  B: 19,  r: 1.1,  series: 64 },
+    '6405':  { d: 25,  D: 80,  B: 21,  r: 1.5,  series: 64 },
+    '6406':  { d: 30,  D: 90,  B: 23,  r: 1.5,  series: 64 },
+    '6407':  { d: 35,  D: 100, B: 25,  r: 1.5,  series: 64 },
+    '6408':  { d: 40,  D: 110, B: 27,  r: 2,    series: 64 },
+    '6409':  { d: 45,  D: 120, B: 29,  r: 2,    series: 64 },
+    '6410':  { d: 50,  D: 130, B: 31,  r: 2.1,  series: 64 },
+    '6411':  { d: 55,  D: 140, B: 33,  r: 2.1,  series: 64 },
+    '6412':  { d: 60,  D: 150, B: 35,  r: 2.1,  series: 64 },
+    '6413':  { d: 65,  D: 160, B: 37,  r: 2.1,  series: 64 },
+    '6414':  { d: 70,  D: 180, B: 42,  r: 3,    series: 64 },
+    '6415':  { d: 75,  D: 190, B: 45,  r: 3,    series: 64 },
+    '6416':  { d: 80,  D: 200, B: 48,  r: 3,    series: 64 },
+    '6417':  { d: 85,  D: 210, B: 52,  r: 4,    series: 64 },
+    '6418':  { d: 90,  D: 225, B: 54,  r: 4,    series: 64 },
+    '6419':  { d: 95,  D: 240, B: 55,  r: 4,    series: 64 },
+    '6420':  { d: 100, D: 250, B: 58,  r: 4,    series: 64 },
+    '6421':  { d: 105, D: 260, B: 60,  r: 4,    series: 64 },
+    '6422':  { d: 110, D: 280, B: 65,  r: 4,    series: 64 },
+    '6424':  { d: 120, D: 310, B: 72,  r: 5,    series: 64 },
+    '6426':  { d: 130, D: 340, B: 78,  r: 5,    series: 64 },
+  };
+
+  /**
+   * 베어링 호칭번호로 KS B 2023 깊은 홈 볼베어링 규격을 조회한다.
+   * @param {string} designation - 호칭번호 (예: '6206', '60/22')
+   * @returns {object}
+   *   - found=true:  { found:true, designation, d, D, B, r, series }
+   *   - found=false: { found:false, reason:'not_found', designation }
+   */
+  function lookupBearingByDesignation(designation) {
+    if (designation == null) return { found: false, reason: 'not_found', designation };
+    const key = String(designation).trim();
+    const rec = DEEP_GROOVE_BEARING_TABLE[key];
+    if (rec) {
+      return { found: true, designation: key, d: rec.d, D: rec.D, B: rec.B, r: rec.r, series: rec.series };
+    }
+    return { found: false, reason: 'not_found', designation: key };
+  }
+
   /**
    * 다듬질 기호 (Surface Finish Symbol)
    *
@@ -789,6 +953,8 @@ const DrawingModel = (() => {
     SURFACE_FINISH_TABLE,
     SNAP_RING_KS_TABLE,
     lookupSnapRingByShaft,
+    DEEP_GROOVE_BEARING_TABLE,
+    lookupBearingByDesignation,
     createGeometricTolerance,
     createDatum,
     createBreakLine,

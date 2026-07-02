@@ -445,6 +445,15 @@ const ImageAnalyzer = (() => {
               <span style="font-size:10px; color:#6b7280;">0 = 없음, 최대 2</span>
             </div>
             <div id="chainGearInputs" style="display:grid; gap:8px;"></div>
+
+            <!-- 베어링(깊은 홈 볼베어링) 갯수 선택 + 동적 입력 -->
+            <div style="margin-top:12px; display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+              <label style="font-size:12px; color:#38bdf8; font-weight:600;">◎ 베어링 수</label>
+              <input type="number" id="paramBearingCount" value="0" min="0" max="4"
+                style="width:60px; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:13px; text-align:center;">
+              <span style="font-size:10px; color:#6b7280;">0 = 없음, 최대 4 (깊은 홈 볼베어링)</span>
+            </div>
+            <div id="bearingInputs" style="display:grid; gap:8px;"></div>
           </div>
 
           <!-- 중공축 보조투상도 설정 (중공축 선택 시에만 표시) -->
@@ -551,6 +560,8 @@ const ImageAnalyzer = (() => {
       const throughHoleInputsDiv = document.getElementById('throughHoleInputs');
       const chainGearCountInput = document.getElementById('paramChainGearCount');
       const chainGearInputsDiv = document.getElementById('chainGearInputs');
+      const bearingCountInput = document.getElementById('paramBearingCount');
+      const bearingInputsDiv = document.getElementById('bearingInputs');
 
       // ★ 카운터보어 체크박스 토글
       const leftCBCheck = document.getElementById('paramLeftCB');
@@ -645,17 +656,19 @@ const ImageAnalyzer = (() => {
           chkR.addEventListener('change', function() { valR.style.display = chkR.checked ? 'inline-block' : 'none'; });
         }
 
-        // 직경 변경 시 중공축 외경 자동 업데이트 + 스냅링 자동 규격 재계산
+        // 직경 변경 시 중공축 외경 자동 업데이트 + 스냅링/베어링 자동 규격 재계산
         sectionInputsDiv.querySelectorAll('.sec-diameter').forEach(el => {
           el.addEventListener('input', updateHollowOuterDiam);
           ['input', 'change'].forEach(evt => el.addEventListener(evt, () => {
             if (typeof refreshAllSnapRingBlocks === 'function') refreshAllSnapRingBlocks();
+            if (typeof refreshAllBearingBlocks === 'function') refreshAllBearingBlocks();
           }));
         });
-        // 길이 변경 시 스냅링 우측 오프셋 자동 재계산
+        // 길이 변경 시 스냅링/베어링 우측 오프셋 자동 재계산
         sectionInputsDiv.querySelectorAll('.sec-length').forEach(el => {
           ['input', 'change'].forEach(evt => el.addEventListener(evt, () => {
             if (typeof refreshAllSnapRingBlocks === 'function') refreshAllSnapRingBlocks();
+            if (typeof refreshAllBearingBlocks === 'function') refreshAllBearingBlocks();
           }));
         });
 
@@ -670,6 +683,8 @@ const ImageAnalyzer = (() => {
         updateThroughHoleSelects(count);
         // 체인스프라켓 select 업데이트
         if (typeof updateChainGearSelects === 'function') updateChainGearSelects(count);
+        // 베어링 select 업데이트
+        if (typeof updateBearingSelects === 'function') updateBearingSelects(count);
       }
 
       buildSectionInputs(defaultCount);
@@ -1040,6 +1055,305 @@ const ImageAnalyzer = (() => {
       }
       ['input', 'change', 'keyup', 'mouseup', 'pointerup'].forEach(evt => {
         snapRingCountInput.addEventListener(evt, onSnapRingCountChange);
+      });
+
+      // ============================================================
+      // ── 베어링(깊은 홈 볼베어링 KS B 2023) 동적 입력 빌더 ──
+      //   호칭번호 입력 + 구간 선택 → 규격표에서 d/D/B/r 조회.
+      //   호칭번호 d ≠ 구간 축지름 → 억지끼워맞춤 모달.
+      //   좌측 오프셋 입력 → 우측 오프셋 = 축길이 − (B + 좌측) 자동.
+      // ============================================================
+
+      // 우측 오프셋 자동 계산: 축길이 − (베어링 폭 B + 좌측 오프셋)
+      function _updateBearingRightOffset(k) {
+        const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${k}"]`);
+        if (!block) return;
+        const secVal = block.querySelector('.br-sec')?.value || '';
+        const { length: shaftLen } = _getSectionDims(secVal);
+        const B = parseFloat(block.getAttribute('data-br-B'));
+        const leftOff = parseFloat(block.querySelector('.br-left-off')?.value);
+        const rightEl = block.querySelector('.br-right-off');
+        if (!rightEl) return;
+        if (!isNaN(shaftLen) && !isNaN(B) && !isNaN(leftOff)) {
+          const right = shaftLen - (B + leftOff);
+          rightEl.value = Math.round(right * 100) / 100;
+          rightEl.style.color = right < 0 ? '#f87171' : '#34d399';
+          const warn = block.querySelector('.br-right-warn');
+          if (warn) warn.style.display = right < 0 ? 'block' : 'none';
+        } else {
+          rightEl.value = '';
+          const warn = block.querySelector('.br-right-warn');
+          if (warn) warn.style.display = 'none';
+        }
+      }
+
+      // 호칭번호 + 구간 조회 → 규격 표시 + 축지름 일치 검사
+      function refreshBearingBlock(k) {
+        const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${k}"]`);
+        if (!block) return;
+        const desig = (block.querySelector('.br-desig')?.value || '').trim();
+        const secVal = block.querySelector('.br-sec')?.value || '';
+        const { diam: shaftDiam } = _getSectionDims(secVal);
+
+        const specBox = block.querySelector('.br-spec-box');
+        const infoLine = block.querySelector('.br-info-line');
+        const mismatchBox = block.querySelector('.br-mismatch-box');
+
+        // 초기화
+        block.removeAttribute('data-br-B');
+        block.removeAttribute('data-br-D');
+        block.removeAttribute('data-br-d');
+        block.removeAttribute('data-br-r');
+        block.setAttribute('data-br-fit', 'ok'); // ok | forced | invalid
+
+        if (!desig) {
+          if (specBox) specBox.style.display = 'none';
+          if (mismatchBox) mismatchBox.style.display = 'none';
+          if (infoLine) infoLine.textContent = '베어링 호칭번호와 적용 구간을 선택하세요.';
+          _updateBearingRightOffset(k);
+          return;
+        }
+
+        const lookup = (typeof DrawingModel !== 'undefined' && DrawingModel.lookupBearingByDesignation)
+          ? DrawingModel.lookupBearingByDesignation(desig)
+          : { found: false, reason: 'not_found', designation: desig };
+
+        if (!lookup.found) {
+          if (specBox) specBox.style.display = 'none';
+          if (mismatchBox) mismatchBox.style.display = 'none';
+          block.setAttribute('data-br-fit', 'invalid');
+          if (infoLine) { infoLine.style.color = '#f87171'; infoLine.textContent = `⚠ 호칭번호 "${desig}" 는 규격표에 없습니다.`; }
+          _updateBearingRightOffset(k);
+          return;
+        }
+
+        // 규격 조회 성공 → 값 표시
+        block.setAttribute('data-br-B', lookup.B);
+        block.setAttribute('data-br-D', lookup.D);
+        block.setAttribute('data-br-d', lookup.d);
+        block.setAttribute('data-br-r', lookup.r);
+        if (specBox) specBox.style.display = 'block';
+        const dEl = block.querySelector('.br-spec-d');
+        const DEl = block.querySelector('.br-spec-D');
+        const BEl = block.querySelector('.br-spec-B');
+        const rEl = block.querySelector('.br-spec-r');
+        if (dEl) dEl.value = lookup.d;
+        if (DEl) DEl.value = lookup.D;
+        if (BEl) BEl.value = lookup.B;
+        if (rEl) rEl.value = lookup.r;
+
+        if (infoLine) { infoLine.style.color = '#93c5fd'; infoLine.textContent = `✔ ${lookup.designation} (계열 ${lookup.series}) — 내경 d=${lookup.d} · 외경 D=${lookup.D} · 폭 B=${lookup.B} · 필렛 r=${lookup.r}`; }
+
+        // 축지름 일치 검사
+        if (!secVal || isNaN(shaftDiam)) {
+          // 구간 미선택 or 직경 미입력 — 일치 검사 보류
+          if (mismatchBox) mismatchBox.style.display = 'none';
+          block.setAttribute('data-br-fit', 'ok');
+        } else if (Math.abs(shaftDiam - lookup.d) < 0.001) {
+          // 일치 → 정상
+          if (mismatchBox) mismatchBox.style.display = 'none';
+          block.setAttribute('data-br-fit', 'ok');
+        } else {
+          // 불일치 → 억지끼워맞춤 모달 (이미 forced로 확정된 경우 유지)
+          const already = block.getAttribute('data-br-forced-confirmed') === 'true';
+          if (already) {
+            block.setAttribute('data-br-fit', 'forced');
+            if (mismatchBox) {
+              mismatchBox.style.display = 'block';
+              mismatchBox.querySelector('.br-mismatch-msg').textContent =
+                `억지 끼워맞춤 적용됨: 베어링 내경 d=${lookup.d} ≠ 축지름 ${shaftDiam}`;
+            }
+          } else {
+            block.setAttribute('data-br-fit', 'ok'); // 모달 응답 전까지는 미확정
+            _showBearingFitModal(k, lookup.d, shaftDiam);
+          }
+        }
+        _updateBearingRightOffset(k);
+      }
+
+      // 억지끼워맞춤 확인 모달
+      function _showBearingFitModal(k, bearingBore, shaftDiam) {
+        // 중복 방지
+        if (document.getElementById('bearingFitModal')) return;
+        const modal = document.createElement('div');
+        modal.id = 'bearingFitModal';
+        modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100000; display:flex; align-items:center; justify-content:center;';
+        modal.innerHTML = `
+          <div style="background:#1e2230; border:1px solid #b91c1c; border-radius:12px; padding:24px; max-width:420px; box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+            <div style="font-size:16px; color:#fca5a5; font-weight:700; margin-bottom:10px;">⚠ 베어링 삽입 불가능</div>
+            <div style="font-size:13px; color:#e2e8f0; line-height:1.6; margin-bottom:8px;">
+              선택한 베어링의 내경(d)과 구간 축지름이 일치하지 않습니다.
+            </div>
+            <div style="font-size:13px; color:#fbbf24; margin-bottom:16px;">
+              · 베어링 내경 d = <b>${bearingBore}</b> mm<br>
+              · 구간 축지름 = <b>${shaftDiam}</b> mm
+            </div>
+            <div style="font-size:13px; color:#e2e8f0; margin-bottom:18px;">
+              <b>억지 끼워맞춤</b>을 하시겠습니까?
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+              <button id="bfmNo" style="padding:9px 18px; background:#374151; border:none; border-radius:8px; color:#e2e8f0; cursor:pointer; font-size:13px;">아니오</button>
+              <button id="bfmYes" style="padding:9px 18px; background:linear-gradient(135deg,#dc2626,#b91c1c); border:none; border-radius:8px; color:white; cursor:pointer; font-size:13px; font-weight:600;">예 (억지 끼워맞춤)</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(modal);
+        const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${k}"]`);
+
+        modal.querySelector('#bfmYes').addEventListener('click', () => {
+          if (block) {
+            block.setAttribute('data-br-forced-confirmed', 'true');
+            block.setAttribute('data-br-fit', 'forced');
+          }
+          modal.remove();
+          refreshBearingBlock(k);
+        });
+        modal.querySelector('#bfmNo').addEventListener('click', () => {
+          // 아니오: 모달 내리고 사용자가 다시 선택하게 함 (호칭번호/구간 초기화하지 않고 그대로 두되 fit=ok 유지)
+          if (block) {
+            block.removeAttribute('data-br-forced-confirmed');
+            block.setAttribute('data-br-fit', 'ok');
+            const mismatchBox = block.querySelector('.br-mismatch-box');
+            if (mismatchBox) mismatchBox.style.display = 'none';
+            const infoLine = block.querySelector('.br-info-line');
+            if (infoLine) { infoLine.style.color = '#f59e0b'; infoLine.textContent = '다른 베어링 호칭번호 또는 다른 구간을 선택하세요.'; }
+          }
+          modal.remove();
+        });
+      }
+
+      function buildBearingInputs(brCount) {
+        bearingInputsDiv.innerHTML = '';
+        const secCount = parseInt(countInput.value) || 0;
+        for (let k = 0; k < brCount; k++) {
+          const block = document.createElement('div');
+          block.className = 'br-block';
+          block.setAttribute('data-br-idx', k);
+          block.setAttribute('data-br-fit', 'ok');
+          block.style.cssText = 'background:#1e2230; border:1px solid #0369a1; border-radius:8px; padding:12px;';
+
+          let secOptions = '<option value="">없음</option>';
+          for (let s = 0; s < secCount; s++) {
+            secOptions += `<option value="S${s + 1}">S${s + 1}</option>`;
+          }
+
+          block.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
+              <label style="font-size:12px; color:#38bdf8; font-weight:600;">베어링 ${k + 1}</label>
+              <span style="font-size:10px; color:#6b7280;">적용 구간</span>
+              <select class="br-sec" data-br-idx="${k}" style="width:70px; padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+                ${secOptions}
+              </select>
+              <span style="font-size:10px; color:#6b7280;">호칭번호</span>
+              <input type="text" class="br-desig" data-br-idx="${k}" placeholder="예: 6206"
+                style="width:90px; padding:4px 6px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+            </div>
+
+            <div class="br-info-line" style="font-size:10px; color:#93c5fd; margin-bottom:8px; line-height:1.4;">
+              베어링 호칭번호와 적용 구간을 선택하세요.
+            </div>
+
+            <!-- 규격 조회 결과 (읽기 전용) -->
+            <div class="br-spec-box" style="display:none; background:#0c1a24; border:1px solid #0369a1; border-radius:6px; padding:8px; margin-bottom:6px;">
+              <div style="font-size:10px; color:#38bdf8; margin-bottom:4px; font-weight:600;">◎ KS B 2023 깊은 홈 볼베어링 규격</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px;">
+                <div>
+                  <label style="font-size:9px; color:#6b7280; display:block; margin-bottom:2px;">내경 d</label>
+                  <input type="number" class="br-spec-d" data-br-idx="${k}" readonly
+                    style="width:100%; padding:5px; background:#0f1620; border:1px solid #2b3340; border-radius:6px; color:#94a3b8; font-size:12px;">
+                </div>
+                <div>
+                  <label style="font-size:9px; color:#38bdf8; display:block; margin-bottom:2px;">외경 D</label>
+                  <input type="number" class="br-spec-D" data-br-idx="${k}" readonly
+                    style="width:100%; padding:5px; background:#0f1620; border:1px solid #0369a1; border-radius:6px; color:#7dd3fc; font-size:12px; font-weight:600;">
+                </div>
+                <div>
+                  <label style="font-size:9px; color:#38bdf8; display:block; margin-bottom:2px;">폭 B</label>
+                  <input type="number" class="br-spec-B" data-br-idx="${k}" readonly
+                    style="width:100%; padding:5px; background:#0f1620; border:1px solid #0369a1; border-radius:6px; color:#7dd3fc; font-size:12px; font-weight:600;">
+                </div>
+                <div>
+                  <label style="font-size:9px; color:#38bdf8; display:block; margin-bottom:2px;">필렛 r</label>
+                  <input type="number" class="br-spec-r" data-br-idx="${k}" readonly
+                    style="width:100%; padding:5px; background:#0f1620; border:1px solid #2b3340; border-radius:6px; color:#94a3b8; font-size:12px;">
+                </div>
+              </div>
+            </div>
+
+            <!-- 억지끼워맞춤 표시 배너 -->
+            <div class="br-mismatch-box" style="display:none; background:#2a1215; border:1px solid #b91c1c; border-radius:6px; padding:8px; margin-bottom:6px;">
+              <div style="font-size:12px; color:#fca5a5; font-weight:700;">⚠ 억지 끼워맞춤</div>
+              <div class="br-mismatch-msg" style="font-size:10px; color:#f87171; margin-top:2px;"></div>
+              <div style="font-size:10px; color:#94a3b8; margin-top:3px;">도면에 "억지 끼워맞춤"으로 표시됩니다.</div>
+            </div>
+
+            <!-- 좌측 오프셋 -->
+            <div style="margin-bottom:6px;">
+              <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">좌측 오프셋 (mm) — 구간 좌측에서 베어링까지 거리</label>
+              <input type="number" class="br-left-off" data-br-idx="${k}" placeholder="예: 5" step="0.1"
+                style="width:100%; padding:6px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:13px;">
+            </div>
+
+            <!-- 우측 오프셋 (자동) -->
+            <div>
+              <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">우측 오프셋 (mm) — 자동 계산: 축길이 − (폭 B + 좌측 오프셋)</label>
+              <input type="number" class="br-right-off" data-br-idx="${k}" placeholder="자동 계산" readonly
+                style="width:100%; padding:6px; background:#151b12; border:1px solid #554a20; border-radius:6px; color:#34d399; font-size:13px;">
+              <div class="br-right-warn" style="display:none; font-size:10px; color:#f87171; margin-top:2px;">
+                ⚠ 우측 오프셋이 음수입니다. 좌측 오프셋 또는 축길이를 확인하세요.
+              </div>
+            </div>
+
+            <div style="font-size:10px; color:#6b7280; margin-top:6px;">
+              * 베어링은 단면도로 표현됩니다 (외경 D × 폭 B).
+            </div>
+          `;
+          bearingInputsDiv.appendChild(block);
+
+          const secSel = block.querySelector('.br-sec');
+          const desigEl = block.querySelector('.br-desig');
+          const leftOffEl = block.querySelector('.br-left-off');
+
+          ['input', 'change'].forEach(evt => {
+            secSel && secSel.addEventListener(evt, () => refreshBearingBlock(k));
+            desigEl && desigEl.addEventListener(evt, () => refreshBearingBlock(k));
+            leftOffEl && leftOffEl.addEventListener(evt, () => _updateBearingRightOffset(k));
+          });
+
+          refreshBearingBlock(k);
+        }
+      }
+
+      function updateBearingSelects(secCount) {
+        bearingInputsDiv.querySelectorAll('.br-sec').forEach(sel => {
+          const val = sel.value;
+          sel.innerHTML = '<option value="">없음</option>';
+          for (let s = 0; s < secCount; s++) {
+            sel.innerHTML += `<option value="S${s + 1}">S${s + 1}</option>`;
+          }
+          sel.value = val;
+          const blk = sel.closest('.br-block');
+          if (blk) refreshBearingBlock(parseInt(blk.getAttribute('data-br-idx'), 10));
+        });
+      }
+
+      function refreshAllBearingBlocks() {
+        bearingInputsDiv.querySelectorAll('.br-block').forEach(blk => {
+          refreshBearingBlock(parseInt(blk.getAttribute('data-br-idx'), 10));
+        });
+      }
+
+      buildBearingInputs(0);
+      let _lastBrCount = 0;
+      function onBearingCountChange() {
+        const n = Math.min(Math.max(parseInt(bearingCountInput.value) || 0, 0), 4);
+        if (n === _lastBrCount) return;
+        _lastBrCount = n;
+        bearingCountInput.value = n;
+        buildBearingInputs(n);
+      }
+      ['input', 'change', 'keyup', 'mouseup', 'pointerup'].forEach(evt => {
+        bearingCountInput.addEventListener(evt, onBearingCountChange);
       });
 
       // ── 관통 구멍 동적 입력 빌더 ──
@@ -1853,6 +2167,48 @@ const ImageAnalyzer = (() => {
           }
         }
         console.log('[collectFormData] final hiddenFeatures:', JSON.stringify(hiddenFeatures.filter(h => h.type === 'snapring')));
+
+        // ── 베어링(깊은 홈 볼베어링) 데이터 수집 ──
+        const brCount = parseInt(bearingCountInput.value) || 0;
+        for (let k = 0; k < brCount; k++) {
+          const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${k}"]`);
+          if (!block) continue;
+          const brSec = block.querySelector('.br-sec')?.value || '';
+          const brDesig = (block.querySelector('.br-desig')?.value || '').trim();
+          const brBore = parseFloat(block.getAttribute('data-br-d'));    // 내경 d
+          const brOuter = parseFloat(block.getAttribute('data-br-D'));   // 외경 D
+          const brWidth = parseFloat(block.getAttribute('data-br-B'));   // 폭 B
+          const brFillet = parseFloat(block.getAttribute('data-br-r'));  // 필렛 r
+          const brFit = block.getAttribute('data-br-fit') || 'ok';       // ok | forced | invalid
+          const brLeftOff = parseFloat(block.querySelector('.br-left-off')?.value);
+          let brRightOff = parseFloat(block.querySelector('.br-right-off')?.value);
+          if (isNaN(brRightOff) && !isNaN(brLeftOff) && brWidth > 0) {
+            const secIdx = parseInt(String(brSec).replace(/^S/i, ''), 10) - 1;
+            const lenEl = sectionInputsDiv.querySelector(`.sec-length[data-idx="${secIdx}"]`);
+            const shaftLen = lenEl ? parseFloat(lenEl.value) : NaN;
+            if (!isNaN(shaftLen)) brRightOff = Math.round((shaftLen - (brWidth + brLeftOff)) * 100) / 100;
+          }
+          console.log(`[collectFormData] BR[${k}]: sec=${brSec}, desig=${brDesig}, d=${brBore}, D=${brOuter}, B=${brWidth}, r=${brFillet}, fit=${brFit}, leftOff=${brLeftOff}, rightOff=${brRightOff}`);
+
+          // 유효 조건: 구간 선택 + 규격 조회 성공(D/B 존재) + fit이 invalid 아님
+          if (brSec && brOuter > 0 && brWidth > 0 && brFit !== 'invalid') {
+            hiddenFeatures.push({
+              id: `HF_BR${k + 1}`,
+              section: brSec,
+              type: 'bearing',
+              bearingDesignation: brDesig,
+              bearingBore: brBore,        // d (내경)
+              bearingOuter: brOuter,      // D (외경)
+              bearingWidth: brWidth,      // B (폭)
+              bearingFillet: brFillet,    // r (필렛)
+              bearingLeftOffset: isNaN(brLeftOff) ? null : brLeftOff,
+              bearingRightOffset: isNaN(brRightOff) ? null : brRightOff,
+              bearingForcedFit: (brFit === 'forced'),  // 억지 끼워맞춤 여부
+              confidence: CONF.CONFIRMED,
+            });
+          }
+        }
+        console.log('[collectFormData] bearings:', JSON.stringify(hiddenFeatures.filter(h => h.type === 'bearing')));
 
         // ── 관통 구멍 데이터 수집 ──
         const thCount = parseInt(throughHoleCountInput.value) || 0;
