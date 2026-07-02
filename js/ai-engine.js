@@ -2275,6 +2275,9 @@ const AIEngine = (() => {
           doc.elements.push(rText);
         }
 
+        // ★ v157 진단: 실제 런타임 좌표/스케일 출력 (베어링이 안 그려질 때 원인 추적)
+        console.log(`[AI-Engine] BEARING GEOM ${hf.id}: PX=${PX.toFixed(3)}, oy=${oy.toFixed(1)}, rOut=${rOut.toFixed(1)}, rBore=${rBore.toFixed(1)}, sec.r=${sec.r?.toFixed(1)}, yOutTop=${yOutTop.toFixed(1)}, yOutBot=${yOutBot.toFixed(1)}, bX1=${bX1.toFixed(1)}, bX2=${bX2.toFixed(1)}, bWpx=${bWpx.toFixed(1)}, ballDia=${ballDia.toFixed(1)}, pushed outlines OK`);
+
         // (7) 지시선 + 라벨 (호칭번호, 필요시 억지 끼워맞춤)
         const brLabel = `깊은홈 볼베어링 ${hf.bearingDesignation}`
           + (hf.bearingForcedFit ? ' (억지 끼워맞춤)' : '');
