@@ -2146,10 +2146,13 @@ const AIEngine = (() => {
         if (!(brB > 0) || !(brD > 0) || !(brd > 0)) return;
 
         const sPX_br = secPX(sec);
-        const bWpx = brB * sPX_br;              // 폭 (px)
+        const bWpx = brB * sPX_br;              // 폭 (px, 축방향)
         const rOut = brD / 2 * PX;              // 외경 반지름 (px) — 세로 스케일은 전역 PX
-        const rBore = brd / 2 * PX;             // 내경 반지름 (px)
-        const filPx = Math.min(brR * PX, bWpx / 3, (rOut - rBore) / 3); // 필렛 px (과도 방지)
+        // 축직경 = 정상삽입 시 내경 d 와 동일. 실제 구간 축 반경(sec.r)을 우선 사용.
+        const shaftR = (sec.r && sec.r > 0) ? sec.r : (brd / 2 * PX);
+        const BR_STROKE = 1.2;
+        const brColor = '#000000';
+        const brGroupId = `grp_bear_${hf.id}`;
 
         // X 위치: 좌측 오프셋 우선, 없으면 우측 오프셋, 둘 다 없으면 구간 중심
         let bX1;
@@ -2162,15 +2165,18 @@ const AIEngine = (() => {
         }
         const bX2 = bX1 + bWpx;
 
-        // 세로 경계 Y (중심선 oy 대칭)
+        // ── 사용자 명세 4단계 ──
+        //  1) 직사각형(폭 B × 높이 D, 중심선 oy 대칭)
+        //  2) 위/아래 변에서 (D−축직경)/2 안쪽에 가로선 → 내륜 안쪽면(축 접촉선)
+        //  3) 각 단면 사각형 중앙에 볼 원(지름 = 사각형 가로길이 B 의 절반)
+        //  4) 사각형을 4등분 → 위/아래 변에서 D/4 지점 가로선(볼 잡는 외/내륜 겉모습)
+        //     그 D/4 밴드는 단면이므로 해칭
         const yOutTop = oy - rOut;   // 외경 상단
         const yOutBot = oy + rOut;   // 외경 하단
-        const yBoreTop = oy - rBore; // 내경 상단 (bore 상단 = 축과 접촉면)
-        const yBoreBot = oy + rBore; // 내경 하단
-
-        const BR_STROKE = 1.2;
-        const brColor = '#000000';
-        const brGroupId = `grp_bear_${hf.id}`;
+        const yBoreTop = oy - shaftR; // (2) 내륜 안쪽면 상단 (축과 접촉)
+        const yBoreBot = oy + shaftR; // (2) 내륜 안쪽면 하단
+        const yQTop = oy - rOut / 2;  // (4) 위 변에서 D/4 지점
+        const yQBot = oy + rOut / 2;  // (4) 아래 변에서 D/4 지점
 
         // (0) 베어링 폭 구간의 기존 축 외곽선을 흰색 마스크로 지움 (렌더 순서상 베어링이 나중)
         const brMaskTop = DrawingModel.createOutline(bX1, oy - sec.r, bX2, oy - sec.r, 3);
@@ -2181,62 +2187,49 @@ const AIEngine = (() => {
         brMaskBot.confidence = CONF.CONFIRMED; doc.elements.push(brMaskBot);
 
         // 헬퍼: 외곽선 push
-        const pushLine = (x1, y1, x2, y2, arc) => {
+        const pushLine = (x1, y1, x2, y2) => {
           const el = DrawingModel.createOutline(x1, y1, x2, y2, BR_STROKE);
           el.color = brColor; el.confidence = CONF.CONFIRMED; el._groupId = brGroupId;
-          if (arc) el._arc = arc;
           doc.elements.push(el);
           return el;
         };
 
-        // (1) 외경 상/하 수평선 (외륜 바깥면) — 필렛만큼 안쪽에서 시작
-        pushLine(bX1 + filPx, yOutTop, bX2 - filPx, yOutTop);
-        pushLine(bX1 + filPx, yOutBot, bX2 - filPx, yOutBot);
-        // (2) 외경 좌/우 수직선 (외륜 측면) — 필렛만큼 안쪽에서 시작
-        pushLine(bX1, yOutTop + filPx, bX1, yOutBot - filPx);
-        pushLine(bX2, yOutTop + filPx, bX2, yOutBot - filPx);
-        // (2b) 외곽 4모서리 필렛 (r)
-        if (filPx > 0.5) {
-          pushLine(bX1 + filPx, yOutTop, bX1, yOutTop + filPx, { cx: bX1 + filPx, cy: yOutTop + filPx, r: filPx, sweep: 1 }); // 좌상
-          pushLine(bX2 - filPx, yOutTop, bX2, yOutTop + filPx, { cx: bX2 - filPx, cy: yOutTop + filPx, r: filPx, sweep: 0 }); // 우상
-          pushLine(bX1 + filPx, yOutBot, bX1, yOutBot - filPx, { cx: bX1 + filPx, cy: yOutBot - filPx, r: filPx, sweep: 0 }); // 좌하
-          pushLine(bX2 - filPx, yOutBot, bX2, yOutBot - filPx, { cx: bX2 - filPx, cy: yOutBot - filPx, r: filPx, sweep: 1 }); // 우하
-        }
-        // (3) 내경(bore) 상/하 수평선 (내륜 안쪽면 = 축 접촉면)
-        pushLine(bX1 + filPx, yBoreTop, bX2 - filPx, yBoreTop);
-        pushLine(bX1 + filPx, yBoreBot, bX2 - filPx, yBoreBot);
-        // (3b) 내륜 어깨 필렛
-        if (filPx > 0.5) {
-          pushLine(bX1, yBoreTop - filPx, bX1 + filPx, yBoreTop, { cx: bX1 + filPx, cy: yBoreTop - filPx, r: filPx, sweep: 0 });
-          pushLine(bX2 - filPx, yBoreTop, bX2, yBoreTop - filPx, { cx: bX2 - filPx, cy: yBoreTop - filPx, r: filPx, sweep: 1 });
-          pushLine(bX1, yBoreBot + filPx, bX1 + filPx, yBoreBot, { cx: bX1 + filPx, cy: yBoreBot + filPx, r: filPx, sweep: 1 });
-          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot + filPx, { cx: bX2 - filPx, cy: yBoreBot + filPx, r: filPx, sweep: 0 });
-        } else {
-          pushLine(bX1, yBoreTop, bX1 + filPx, yBoreTop);
-          pushLine(bX2 - filPx, yBoreTop, bX2, yBoreTop);
-          pushLine(bX1, yBoreBot, bX1 + filPx, yBoreBot);
-          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot);
-        }
+        // ── 1) 직사각형 (폭 B × 높이 D) ──
+        pushLine(bX1, yOutTop, bX2, yOutTop);   // 상단 변
+        pushLine(bX1, yOutBot, bX2, yOutBot);   // 하단 변
+        pushLine(bX1, yOutTop, bX1, yOutBot);   // 좌측 변
+        pushLine(bX2, yOutTop, bX2, yOutBot);   // 우측 변
 
-        // (4) 상/하 링 단면 해칭 (외경 상단 ~ 내경 상단 사이 = 절단된 금속)
+        // ── 2) (D−축직경)/2 만큼 위/아래 안쪽 가로선 (내륜 안쪽면) ──
+        pushLine(bX1, yBoreTop, bX2, yBoreTop);
+        pushLine(bX1, yBoreBot, bX2, yBoreBot);
+
+        // ── 4) 위/아래 변에서 D/4 지점 가로선 (외/내륜 겉모습) ──
+        pushLine(bX1, yQTop, bX2, yQTop);
+        pushLine(bX1, yQBot, bX2, yQBot);
+
+        // ── 4-해칭) D/4 밴드(상단: yOutTop~yQTop, 하단: yQBot~yOutBot)는 단면 → 빗면 ──
         const htchTop = DrawingModel.createHatch(
-          [{ x: bX1, y: yOutTop }, { x: bX2, y: yOutTop }, { x: bX2, y: yBoreTop }, { x: bX1, y: yBoreTop }],
+          [{ x: bX1, y: yOutTop }, { x: bX2, y: yOutTop }, { x: bX2, y: yQTop }, { x: bX1, y: yQTop }],
           45, 4);
         htchTop.confidence = CONF.CONFIRMED; htchTop._groupId = brGroupId; doc.elements.push(htchTop);
         const htchBot = DrawingModel.createHatch(
-          [{ x: bX1, y: yBoreBot }, { x: bX2, y: yBoreBot }, { x: bX2, y: yOutBot }, { x: bX1, y: yOutBot }],
-          -45, 4);
+          [{ x: bX1, y: yQBot }, { x: bX2, y: yQBot }, { x: bX2, y: yOutBot }, { x: bX1, y: yOutBot }],
+          45, 4);
         htchBot.confidence = CONF.CONFIRMED; htchBot._groupId = brGroupId; doc.elements.push(htchBot);
 
-        // (5) 볼 원 (상/하 링 중앙) — 볼 직경 ≈ (외경-내경)*0.45, 지름은 링 두께 안에 맞춤
+        // ── 3) 볼 원 (각 단면 사각형 중앙, 지름 = B/2) ──
+        //   단면 사각형(볼이 놓이는 영역) 세로 중앙:
+        //     상단 = D/4 가로선(yQTop)과 내륜 안쪽면(yBoreTop) 사이 중앙
         const ballCX = (bX1 + bX2) / 2;
-        const ringMid = (rOut + rBore) / 2;             // 중심선~링중앙 (px)
-        const ballDia = Math.min((rOut - rBore) * 0.9, bWpx * 0.75);
-        if (ballDia > 2) {
-          const ballTop = DrawingModel.createHole(ballCX, oy - ringMid, ballDia, null, 'through');
+        const ballDia = bWpx / 2;                    // 사각형 가로길이(B)의 절반
+        const ballCYTop = (yQTop + yBoreTop) / 2;    // 상단 볼 중심
+        const ballCYBot = (yQBot + yBoreBot) / 2;    // 하단 볼 중심
+        if (ballDia > 1) {
+          const ballTop = DrawingModel.createHole(ballCX, ballCYTop, ballDia, null, 'through');
           ballTop.color = brColor; ballTop.confidence = CONF.CONFIRMED; ballTop._groupId = brGroupId;
           doc.elements.push(ballTop);
-          const ballBot = DrawingModel.createHole(ballCX, oy + ringMid, ballDia, null, 'through');
+          const ballBot = DrawingModel.createHole(ballCX, ballCYBot, ballDia, null, 'through');
           ballBot.color = brColor; ballBot.confidence = CONF.CONFIRMED; ballBot._groupId = brGroupId;
           doc.elements.push(ballBot);
         }
@@ -2258,7 +2251,7 @@ const AIEngine = (() => {
           + (hf.bearingForcedFit ? ' (억지 끼워맞춤)' : '');
         const brElbowX = ballCX - 20;
         const brElbowY = yOutBot + 26;
-        const brLeader1 = DrawingModel.createOutline(brElbowX, brElbowY, ballCX, oy + ringMid, 0.8);
+        const brLeader1 = DrawingModel.createOutline(brElbowX, brElbowY, ballCX, ballCYBot, 0.8);
         brLeader1.confidence = CONF.CONFIRMED; brLeader1.color = '#60a5fa';
         brLeader1._leaderLine = true; brLeader1._leaderArrow = true; brLeader1._groupId = brGroupId;
         doc.elements.push(brLeader1);
