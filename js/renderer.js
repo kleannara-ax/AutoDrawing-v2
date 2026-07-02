@@ -295,8 +295,9 @@ const Renderer = (() => {
     line.setAttribute('y2', el.y2);
     line.setAttribute('stroke', el.color || '#000000');
     // ★ v38: 도면 윤곽선 두께 1로 통일
-    line.setAttribute('stroke-width', 1);
-    line.setAttribute('stroke-linecap', 'round');
+    // ★ v150: 흰색 마스크선(_mask)은 명시된 굵기 사용 → 축 외곽선을 완전히 덮어 홈에서 끊기
+    line.setAttribute('stroke-width', el._mask ? (el.strokeWidth || 3) : 1);
+    line.setAttribute('stroke-linecap', el._mask ? 'butt' : 'round');
 
     // visible edge / shoulder edge 태깅 (data 속성)
     if (el._edgeType) {

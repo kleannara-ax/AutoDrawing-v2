@@ -1994,8 +1994,9 @@ const AIEngine = (() => {
         console.log(`[AI-Engine] SNAPRING ${hf.id}: grooveDepth=${grooveDepth}, will render=${grooveDepth > 0 && srThick > 0}`);
         if (grooveDepth <= 0 || srThick <= 0) return; // forEach 내부이므로 return
 
-        const grooveDepthPx = grooveDepth * PX;
-        const srThickPx = srThick * PX;
+        // 홈 폭(축 방향)은 실제 두께 m 사용 (최소 시인성 폭만 보장)
+        const realThickPx = srThick * PX;
+        const srThickPx = Math.max(realThickPx, 6);
 
         // 홈 X 좌표 계산 (좌측 offset 우선, 없으면 우측 offset)
         const sPX_sr = secPX(sec);
@@ -2009,33 +2010,43 @@ const AIEngine = (() => {
         }
         const grooveX2 = grooveX1 + srThickPx;
 
-        // ★ v146: 스냅링을 참조 규격도(igdoQV5B)처럼 "직사각형 함몰 홈" 프로파일로 표현
-        //   축 외곽선이 홈 위치에서 안쪽으로 step-down → 바닥(폭 m) → step-up 복귀
-        //   상/하 대칭. 홈을 가로지르는 관통 수직선은 그리지 않음(실제 홈처럼 보이게).
-        const SR_STROKE = 1.5;  // v146: 외곽선과 동일한 굵기로 홈 윤곽 강조
+        // ★ v150: 정면도 원주 홈(circumferential groove) — 참조 이미지(IVB6yE0R)와 동일
+        //   요구사항(최종):
+        //   (1) 홈 벽 세로선 2개만 그린다 (축 상면 → 축 하면 전체 관통).
+        //   (2) 축의 가로 외곽선(top/bot)은 홈 폭 구간에서 "끊긴다"(broken).
+        //       → 흰색 마스크 선을 축 외곽선 위에 덮어 홈 구간의 가로선을 지운다.
+        //   (3) 가로 노치선·d2 표시선·계단 모양은 모두 제거 (세로선 2개만 남김).
+        const SR_STROKE = 1.5;
 
-        // 상단 홈: 축 상면 → 아래(앞벽) → 바닥 → 위(뒷벽) → 축 상면 (U자, ⊔)
         const topY = oy - sec.r;
-        const topGrooveBottom = topY + grooveDepthPx;
-        const tL = DrawingModel.createOutline(grooveX1, topY, grooveX1, topGrooveBottom, SR_STROKE);
-        tL.confidence = hf.confidence; doc.elements.push(tL);
-        const tB = DrawingModel.createOutline(grooveX1, topGrooveBottom, grooveX2, topGrooveBottom, SR_STROKE);
-        tB.confidence = hf.confidence; doc.elements.push(tB);
-        const tR = DrawingModel.createOutline(grooveX2, topGrooveBottom, grooveX2, topY, SR_STROKE);
-        tR.confidence = hf.confidence; doc.elements.push(tR);
-
-        // 하단 홈 (대칭, ∩자, ⊓)
         const botY = oy + sec.r;
-        const botGrooveTop = botY - grooveDepthPx;
-        const bL = DrawingModel.createOutline(grooveX1, botY, grooveX1, botGrooveTop, SR_STROKE);
-        bL.confidence = hf.confidence; doc.elements.push(bL);
-        const bB = DrawingModel.createOutline(grooveX1, botGrooveTop, grooveX2, botGrooveTop, SR_STROKE);
-        bB.confidence = hf.confidence; doc.elements.push(bB);
-        const bR = DrawingModel.createOutline(grooveX2, botGrooveTop, grooveX2, botY, SR_STROKE);
-        bR.confidence = hf.confidence; doc.elements.push(bR);
 
-        // v146: 홈을 가로지르는 관통 수직 실선 2개(srLineL/srLineR)는 제거.
-        //   → 축 외곽선이 실제로 step-down한 "함몰 홈"으로 보이도록 함.
+        // ── (a) 축 가로 외곽선을 홈 구간에서 끊기 (흰색 마스크) ──
+        //   렌더 순서상 스냅링 요소가 축 외곽선보다 나중에 push되어 위에 덮인다.
+        //   흰색 굵은 선으로 top/bot 외곽선의 홈 폭 구간(grooveX1~grooveX2)을 지운다.
+        const srMaskTop = DrawingModel.createOutline(grooveX1, topY, grooveX2, topY, 3);
+        srMaskTop.confidence = CONF.CONFIRMED;
+        srMaskTop.color = '#ffffff';
+        srMaskTop._mask = true;
+        srMaskTop.strokeWidth = 3;
+        doc.elements.push(srMaskTop);
+        const srMaskBot = DrawingModel.createOutline(grooveX1, botY, grooveX2, botY, 3);
+        srMaskBot.confidence = CONF.CONFIRMED;
+        srMaskBot.color = '#ffffff';
+        srMaskBot._mask = true;
+        srMaskBot.strokeWidth = 3;
+        doc.elements.push(srMaskBot);
+
+        // ── (b) 홈 벽 세로선 2개 — 축 상면 → 축 하면 전체 관통 ──
+        //   상/하를 수평선으로 닫지 않는다 → 홈이 열린(파인) 것으로 표현.
+        //   검정 실선으로 명확히 표현 (참조 이미지와 동일) → CONFIRMED 강제.
+        const srWallL = DrawingModel.createOutline(grooveX1, topY, grooveX1, botY, SR_STROKE);
+        srWallL.confidence = CONF.CONFIRMED; doc.elements.push(srWallL);
+        const srWallR = DrawingModel.createOutline(grooveX2, topY, grooveX2, botY, SR_STROKE);
+        srWallR.confidence = CONF.CONFIRMED; doc.elements.push(srWallR);
+
+        // 지시선 화살표가 가리킬 위치 (홈 하단 벽 근처)
+        const botGrooveTop = botY;
 
         // ★ v39: 지시선 텍스트에 직경 + 두께 함께 표시
         const grooveMidX = (grooveX1 + grooveX2) / 2;
