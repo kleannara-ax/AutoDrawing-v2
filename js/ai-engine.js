@@ -2271,10 +2271,12 @@ const AIEngine = (() => {
         pushLine(bX1, yOutTop + filPx, bX1, yOutBot - filPx);   // 좌측 변 (연속)
         pushLine(bX2, yOutTop + filPx, bX2, yOutBot - filPx);   // 우측 변 (연속)
         if (filPx > 0.5) {
-          pushLine(bX1 + filPx, yOutTop, bX1, yOutTop + filPx, { cx: bX1 + filPx, cy: yOutTop + filPx, r: filPx, sweep: 1 });
-          pushLine(bX2 - filPx, yOutTop, bX2, yOutTop + filPx, { cx: bX2 - filPx, cy: yOutTop + filPx, r: filPx, sweep: 0 });
-          pushLine(bX1 + filPx, yOutBot, bX1, yOutBot - filPx, { cx: bX1 + filPx, cy: yOutBot - filPx, r: filPx, sweep: 0 });
-          pushLine(bX2 - filPx, yOutBot, bX2, yOutBot - filPx, { cx: bX2 - filPx, cy: yOutBot - filPx, r: filPx, sweep: 1 });
+          // ★ KS 규격: 단일 부품(양끝에 더 큰 직경 부품 없음) → 4꼭짓점 "볼록(convex)" 필렛.
+          //   아크 중심을 사각형 안쪽에 두고, 호가 코너 바깥(뾰족한 90°) 쪽으로 부풀게 sweep 반전.
+          pushLine(bX1 + filPx, yOutTop, bX1, yOutTop + filPx, { cx: bX1 + filPx, cy: yOutTop + filPx, r: filPx, sweep: 0 });
+          pushLine(bX2 - filPx, yOutTop, bX2, yOutTop + filPx, { cx: bX2 - filPx, cy: yOutTop + filPx, r: filPx, sweep: 1 });
+          pushLine(bX1 + filPx, yOutBot, bX1, yOutBot - filPx, { cx: bX1 + filPx, cy: yOutBot - filPx, r: filPx, sweep: 1 });
+          pushLine(bX2 - filPx, yOutBot, bX2, yOutBot - filPx, { cx: bX2 - filPx, cy: yOutBot - filPx, r: filPx, sweep: 0 });
         }
 
         // ── 2) 내륜/외륜을 나누는 반지름방향 밴드 경계선 (전체 폭) ──
