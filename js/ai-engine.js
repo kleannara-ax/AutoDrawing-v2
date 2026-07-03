@@ -2201,15 +2201,17 @@ const AIEngine = (() => {
         const ringBand = rOut - rBore;                 // 링(반쪽) 두께 (px)
         const ballCX = (bX1 + bX2) / 2;                // 볼 중심 X (베어링 폭 중앙)
         const ringMid = (rOut + rBore) / 2;            // 중심선~링중앙 거리
-        // ═══ KS 규격 재설계 (사용자 지적 3건 반영) ═══
-        //   1) 해칭 = 외형선과 동일(검정, 같은 굵기).
-        //   2) 볼과 홈이 딱 붙음: 홈은 직선(어깨선)이고, 볼 원이 그 직선에 접함.
-        //      홈 직선은 볼과 겹치는 중앙 구간을 그리지 않음(볼 내부 침입선 삭제)
-        //      → 육안으로 "볼과 홈이 붙어있다" 확인됨.
-        //   3) 볼 지름 = 캐비티(홈) 세로길이의 2/3.
-        //   링밴드(반쪽) 두께=1.0: 외륜금속 0.27 | 캐비티 0.46 | 내륜금속 0.27
-        const OUTER_METAL_F = 0.27;   // 외륜 금속 비율
-        const CAVITY_F = 0.46;        // 볼 캐비티 비율(홈 세로 구간)
+        // ═══ KS 규격 재설계 v162 (사용자 재지적 반영) ═══
+        //   구조(한쪽 반, 위→중심선):
+        //     외륜 금속(위)  — 해칭 O
+        //     볼이 놓인 캐비티 — 빈 공간(해칭 X, 볼 원 내부도 해칭 X)
+        //     내륜 금속(아래) — 해칭 O
+        //   · 볼은 캐비티를 거의 꽉 채움(크게). 볼 지름 ≈ 캐비티 세로의 0.9.
+        //   · 홈 가로선(외륜/내륜 어깨)은 볼 원의 좌/우에서 볼에 접함(볼 극 높이).
+        //   · 해칭은 위/아래 금속에만. 볼 좌우 공간엔 해칭 없음.
+        //   링밴드(반쪽) 두께=1.0: 외륜금속 0.25 | 캐비티 0.50 | 내륜금속 0.25
+        const OUTER_METAL_F = 0.25;   // 외륜 금속 비율
+        const CAVITY_F = 0.50;        // 볼 캐비티 비율(홈 세로 구간) — 링밴드의 절반
         const cavityH = ringBand * CAVITY_F;            // 캐비티(홈) 세로 길이
         // 캐비티 상/하 경계(=금속과 캐비티의 경계 y)
         const yCavTop = yOutTop + ringBand * OUTER_METAL_F;   // 외륜 금속 아래끝(상단 캐비티 위)
@@ -2219,13 +2221,12 @@ const AIEngine = (() => {
         // 볼 중심 = 캐비티 중앙
         const ballCYTop = (yCavTop + yCavBot_top) / 2;
         const ballCYBot = (yCavBot + yCavTop_bot) / 2;
-        // ★ 볼 지름 = 캐비티 세로길이의 2/3 (사용자 지적 #3). 폭 B의 0.85 이내.
-        const ballDia = Math.max(6, Math.min(cavityH * (2 / 3), bWpx * 0.85));
+        // ★ 볼 지름 = 캐비티 세로의 0.9 (캐비티를 거의 꽉 채움). 폭 B의 0.9 이내.
+        const ballDia = Math.max(6, Math.min(cavityH * 0.9, bWpx * 0.9));
         const ballR = ballDia / 2;
-        // ★ 사용자 #2: 홈 직선은 "볼에 딱 붙게" → 볼의 극(pole) 높이에 배치.
-        //   상단: 볼 위 직선 = ballCYTop - ballR (볼 윗극), 볼 아래 직선 = ballCYTop + ballR (볼 아랫극)
-        const yOuterInnerTop = ballCYTop - ballR;   // 외륜 어깨(상) = 볼 윗극에 접하는 직선
-        const yInnerOuterTop = ballCYTop + ballR;   // 내륜 어깨(상) = 볼 아랫극에 접하는 직선
+        // ★ 홈 직선(어깨)은 볼 극(위/아래 끝) 높이에 위치 → 볼에 접함.
+        const yOuterInnerTop = ballCYTop - ballR;   // 외륜 어깨(상) = 볼 윗극
+        const yInnerOuterTop = ballCYTop + ballR;   // 내륜 어깨(상) = 볼 아랫극
         const yOuterInnerBot = ballCYBot + ballR;   // 외륜 어깨(하) = 볼 아랫극
         const yInnerOuterBot = ballCYBot - ballR;   // 내륜 어깨(하) = 볼 윗극
         const gapL = ballCX - ballR;    // 볼 왼쪽 끝(홈 직선을 여기서 끊음)
@@ -2310,13 +2311,12 @@ const AIEngine = (() => {
           doc.elements.push(ballBot);
         }
 
-        // ── 5) 해칭 — ★사용자 #1: 외형선과 동일한 검정선. 금속 전체를 채움 ──
-        //   볼은 holes 레이어에서 흰색으로 위에 덮이므로, 해칭 사각형은 볼과
-        //   겹쳐도 됨. 금속을 볼 주위로 꽉 채워 "해칭이 볼에 딱 붙게" 보이도록:
-        //     상단 외륜 = [bX1~bX2] × [yOutTop ~ 볼윗극(yOuterInnerTop)]  (볼 위 금속)
-        //     상단 내륜 = [bX1~bX2] × [볼아랫극(yInnerOuterTop) ~ yBoreTop] (볼 아래 금속)
-        //     볼 좌측/우측 금속 = 볼 극 사이 높이 × (bX1~gapL, gapR~bX2)
-        //   → 볼이 해칭으로 둘러싸여 홈에 물린 형태.
+        // ── 5) 해칭 — ★사용자 재지적 반영(v162) ──
+        //   외륜 금속(위) — 해칭 O
+        //   볼이 놓인 공간(가운데) — 빈 공간, 해칭 X  (볼 원 내부·볼 좌우 모두 X)
+        //   내륜 금속(아래) — 해칭 O
+        //   → 위/아래 홈(금속)만 실제 부품이 가운데 볼을 물고 있는 구조.
+        //     해칭은 볼 극 바깥의 금속 영역에만 넣는다(전체 폭).
         const HFIL = filPx > 1 ? filPx * 0.6 : 0;
         // 상단: 볼 위 금속(외륜) — 전체 폭
         addHatchPoly([
@@ -2332,20 +2332,6 @@ const AIEngine = (() => {
           { x: bX2 - HFIL, y: yBoreTop },
           { x: bX1 + HFIL, y: yBoreTop },
         ]);
-        // 상단: 볼 좌측 금속 (볼 극 사이 높이)
-        addHatchPoly([
-          { x: bX1 + HFIL, y: yOuterInnerTop },
-          { x: gapL, y: yOuterInnerTop },
-          { x: gapL, y: yInnerOuterTop },
-          { x: bX1 + HFIL, y: yInnerOuterTop },
-        ]);
-        // 상단: 볼 우측 금속
-        addHatchPoly([
-          { x: gapR, y: yOuterInnerTop },
-          { x: bX2 - HFIL, y: yOuterInnerTop },
-          { x: bX2 - HFIL, y: yInnerOuterTop },
-          { x: gapR, y: yInnerOuterTop },
-        ]);
         // 하단: 볼 아래 금속(외륜) — 전체 폭
         addHatchPoly([
           { x: bX1 + HFIL, y: yOuterInnerBot },
@@ -2359,20 +2345,6 @@ const AIEngine = (() => {
           { x: bX2 - HFIL, y: yBoreBot },
           { x: bX2 - HFIL, y: yInnerOuterBot },
           { x: bX1 + HFIL, y: yInnerOuterBot },
-        ]);
-        // 하단: 볼 좌측 금속
-        addHatchPoly([
-          { x: bX1 + HFIL, y: yInnerOuterBot },
-          { x: gapL, y: yInnerOuterBot },
-          { x: gapL, y: yOuterInnerBot },
-          { x: bX1 + HFIL, y: yOuterInnerBot },
-        ]);
-        // 하단: 볼 우측 금속
-        addHatchPoly([
-          { x: gapR, y: yInnerOuterBot },
-          { x: bX2 - HFIL, y: yInnerOuterBot },
-          { x: bX2 - HFIL, y: yOuterInnerBot },
-          { x: gapR, y: yOuterInnerBot },
         ]);
 
         // (6) 치수 — B (상단 폭), φD / φd (우측)
