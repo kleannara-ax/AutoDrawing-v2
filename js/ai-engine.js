@@ -1022,7 +1022,7 @@ const AIEngine = (() => {
       doc.elements.push({
         id: 'paper_bg',
         type: 'paperBg',
-        layer: 'outlines',
+        layer: 'background',   // ★ 최하단 배경 레이어 (해칭/외형선 모두 위에 보이도록)
         x: 0, y: 0,
         width: paperW, height: paperH,
         fill: '#ffffff',
@@ -2172,29 +2172,72 @@ const AIEngine = (() => {
         }
         const bX2 = bX1 + bWpx;
 
-        // ── KS 규격 깊은 홈 볼베어링 단면도 (v156) ──
-        //   외경 사각형(B×D) + 상/하 링 밴드(외경 D/2 ~ 내경 d/2 전체) + 볼 원 + 레이스웨이 해칭
-        const yOutTop = oy - rOut;   // 외경 상단
-        const yOutBot = oy + rOut;   // 외경 하단
-        const yBoreTop = oy - rBore; // 내경(축 접촉면) 상단
-        const yBoreBot = oy + rBore; // 내경(축 접촉면) 하단
+        // ══════════════════════════════════════════════════════════════
+        // ── KS 규격 깊은 홈 볼베어링 단면도 (v160 전면 재설계) ──
+        //   참조 이미지(sGmltmfJ)의 정확한 구조를 좌표 모델로 재현.
+        //
+        //   [세로 = 반지름(D)방향, 가로 = 폭(B)방향]  중심선 oy 기준 상/하 대칭.
+        //   위→중심선 순서(상단 반쪽):
+        //     yOutTop  ─────────────  외륜 바깥면 (oy - rOut)
+        //       │  외륜 금속 (45° 해칭)                        ← 해칭 O
+        //     yOuterInner ───────────  외륜 안쪽면(레이스 홈 바닥)
+        //       │  ★볼이 놓이는 홈 (비움, 볼 원)               ← 해칭 X
+        //     yInnerOuter ───────────  내륜 바깥면(레이스 홈 바닥)
+        //       │  내륜 금속 (45° 해칭)                        ← 해칭 O
+        //     yBoreTop ──────────────  내륜 안쪽면 = 축 접촉 (oy - rBore)
+        //     ────────────── 중심선(oy) ──────────────
+        //   (하단 반쪽은 완전 대칭)
+        //
+        //   · 하나의 연속된 직사각형 (폭 B × 높이 D), 좌우 변은 위→아래 통짜.
+        //   · 볼은 링밴드 중앙, 지름 = 링밴드 두께의 약 0.62 (폭 B보다 작음).
+        //   · 레이스 홈: 볼 좌/우 짧은 가로선으로 볼을 감싸는 홈 표현.
+        //   · 해칭: 외륜 금속 + 내륜 금속 전체 폭(볼 부분 제외). 볼 홈은 비움.
+        // ══════════════════════════════════════════════════════════════
+        const yOutTop = oy - rOut;   // 외륜 바깥면(상)
+        const yOutBot = oy + rOut;   // 외륜 바깥면(하)
+        const yBoreTop = oy - rBore; // 내륜 안쪽면(상) = 축 접촉
+        const yBoreBot = oy + rBore; // 내륜 안쪽면(하) = 축 접촉
 
-        // 볼: 링 밴드(외경~내경) 중앙에 배치, 지름 = 링밴드 두께의 약 62%
-        const ringBand = rOut - rBore;               // 링 두께 (px)
-        const ballCX = (bX1 + bX2) / 2;
-        const ballDia = Math.min(ringBand * 0.62, bWpx * 0.7); // 볼 지름
+        const ringBand = rOut - rBore;                 // 링(반쪽) 두께 (px)
+        const ballCX = (bX1 + bX2) / 2;                // 볼 중심 X (베어링 폭 중앙)
+        const ringMid = (rOut + rBore) / 2;            // 중심선~링중앙 거리
+        // ═══ KS 규격 재설계 (사용자 지적 3건 반영) ═══
+        //   1) 해칭 = 외형선과 동일(검정, 같은 굵기).
+        //   2) 볼과 홈이 딱 붙음: 홈은 직선(어깨선)이고, 볼 원이 그 직선에 접함.
+        //      홈 직선은 볼과 겹치는 중앙 구간을 그리지 않음(볼 내부 침입선 삭제)
+        //      → 육안으로 "볼과 홈이 붙어있다" 확인됨.
+        //   3) 볼 지름 = 캐비티(홈) 세로길이의 2/3.
+        //   링밴드(반쪽) 두께=1.0: 외륜금속 0.27 | 캐비티 0.46 | 내륜금속 0.27
+        const OUTER_METAL_F = 0.27;   // 외륜 금속 비율
+        const CAVITY_F = 0.46;        // 볼 캐비티 비율(홈 세로 구간)
+        const cavityH = ringBand * CAVITY_F;            // 캐비티(홈) 세로 길이
+        // 캐비티 상/하 경계(=금속과 캐비티의 경계 y)
+        const yCavTop = yOutTop + ringBand * OUTER_METAL_F;   // 외륜 금속 아래끝(상단 캐비티 위)
+        const yCavBot_top = yCavTop + cavityH;                // 내륜 금속 위끝(상단 캐비티 아래)
+        const yCavBot = yOutBot - ringBand * OUTER_METAL_F;   // 외륜 금속 위끝(하단 캐비티 아래)
+        const yCavTop_bot = yCavBot - cavityH;                // 내륜 금속 아래끝(하단 캐비티 위)
+        // 볼 중심 = 캐비티 중앙
+        const ballCYTop = (yCavTop + yCavBot_top) / 2;
+        const ballCYBot = (yCavBot + yCavTop_bot) / 2;
+        // ★ 볼 지름 = 캐비티 세로길이의 2/3 (사용자 지적 #3). 폭 B의 0.85 이내.
+        const ballDia = Math.max(6, Math.min(cavityH * (2 / 3), bWpx * 0.85));
         const ballR = ballDia / 2;
-        const ringMid = (rOut + rBore) / 2;           // 중심선~링중앙
-        const ballCYTop = oy - ringMid;               // 상단 볼 중심
-        const ballCYBot = oy + ringMid;               // 하단 볼 중심
+        // ★ 사용자 #2: 홈 직선은 "볼에 딱 붙게" → 볼의 극(pole) 높이에 배치.
+        //   상단: 볼 위 직선 = ballCYTop - ballR (볼 윗극), 볼 아래 직선 = ballCYTop + ballR (볼 아랫극)
+        const yOuterInnerTop = ballCYTop - ballR;   // 외륜 어깨(상) = 볼 윗극에 접하는 직선
+        const yInnerOuterTop = ballCYTop + ballR;   // 내륜 어깨(상) = 볼 아랫극에 접하는 직선
+        const yOuterInnerBot = ballCYBot + ballR;   // 외륜 어깨(하) = 볼 아랫극
+        const yInnerOuterBot = ballCYBot - ballR;   // 내륜 어깨(하) = 볼 윗극
+        const gapL = ballCX - ballR;    // 볼 왼쪽 끝(홈 직선을 여기서 끊음)
+        const gapR = ballCX + ballR;    // 볼 오른쪽 끝
 
-        // (0) 베어링 폭 구간의 기존 축 외곽선을 흰색 마스크로 지움
+        // (0) 베어링 폭 구간의 기존 축 외곽선을 흰색 마스크로 지움 (베어링이 축 위에 얹힘)
         const brMaskTop = DrawingModel.createOutline(bX1, oy - sec.r, bX2, oy - sec.r, 3);
-        brMaskTop.color = '#ffffff'; brMaskTop._mask = true; brMaskTop.strokeWidth = 3;
-        brMaskTop.confidence = CONF.CONFIRMED; doc.elements.push(brMaskTop);
+        brMaskTop.color = '#ffffff'; brMaskTop._mask = true; brMaskTop.strokeWidth = 4;
+        brMaskTop.confidence = CONF.CONFIRMED; brMaskTop._groupId = brGroupId; doc.elements.push(brMaskTop);
         const brMaskBot = DrawingModel.createOutline(bX1, oy + sec.r, bX2, oy + sec.r, 3);
-        brMaskBot.color = '#ffffff'; brMaskBot._mask = true; brMaskBot.strokeWidth = 3;
-        brMaskBot.confidence = CONF.CONFIRMED; doc.elements.push(brMaskBot);
+        brMaskBot.color = '#ffffff'; brMaskBot._mask = true; brMaskBot.strokeWidth = 4;
+        brMaskBot.confidence = CONF.CONFIRMED; brMaskBot._groupId = brGroupId; doc.elements.push(brMaskBot);
 
         // 헬퍼: 외곽선 push (arc 옵션)
         const pushLine = (x1, y1, x2, y2, arc) => {
@@ -2204,12 +2247,31 @@ const AIEngine = (() => {
           doc.elements.push(el);
           return el;
         };
+        // 헬퍼: 해칭 사각형 push (금속 단면). 폭/높이가 1px 이상일 때만.
+        const addHatch = (x1, x2, yTop, yBot) => {
+          const xa = Math.min(x1, x2), xb = Math.max(x1, x2);
+          const ya = Math.min(yTop, yBot), yb = Math.max(yTop, yBot);
+          if ((xb - xa) < 1 || (yb - ya) < 1) return;
+          const h = DrawingModel.createHatch(
+            [{ x: xa, y: ya }, { x: xb, y: ya }, { x: xb, y: yb }, { x: xa, y: yb }],
+            45, 2.5);
+          h.color = '#1e293b';   // 진한 회색(거의 검정) — 확실히 보이도록
+          h.confidence = CONF.CONFIRMED; h._groupId = brGroupId; doc.elements.push(h);
+        };
+        // 헬퍼: 임의 폴리곤 해칭 push (곡선 홈까지 흐르도록). points = [{x,y},...]
+        //   spacing 2.0 촘촘히 — 얇은 금속 밴드에도 빗금이 여러 줄 들어가게.
+        const addHatchPoly = (points) => {
+          if (!points || points.length < 3) return;
+          const h = DrawingModel.createHatch(points, 45, 5.0);  // 간격 5px — KS처럼 성기게
+          h.color = brColor;   // ★ 사용자 #1: 외형선과 동일한 검정선
+          h.confidence = CONF.CONFIRMED; h._groupId = brGroupId; doc.elements.push(h);
+        };
 
-        // ── 1) 외경 사각형 (B × D), 4모서리 필렛 r ──
+        // ── 1) 외곽 직사각형 (B × D), 4모서리 필렛 r — 하나의 연속 사각형 ──
         pushLine(bX1 + filPx, yOutTop, bX2 - filPx, yOutTop);   // 상단 변
         pushLine(bX1 + filPx, yOutBot, bX2 - filPx, yOutBot);   // 하단 변
-        pushLine(bX1, yOutTop + filPx, bX1, yOutBot - filPx);   // 좌측 변
-        pushLine(bX2, yOutTop + filPx, bX2, yOutBot - filPx);   // 우측 변
+        pushLine(bX1, yOutTop + filPx, bX1, yOutBot - filPx);   // 좌측 변 (연속)
+        pushLine(bX2, yOutTop + filPx, bX2, yOutBot - filPx);   // 우측 변 (연속)
         if (filPx > 0.5) {
           pushLine(bX1 + filPx, yOutTop, bX1, yOutTop + filPx, { cx: bX1 + filPx, cy: yOutTop + filPx, r: filPx, sweep: 1 });
           pushLine(bX2 - filPx, yOutTop, bX2, yOutTop + filPx, { cx: bX2 - filPx, cy: yOutTop + filPx, r: filPx, sweep: 0 });
@@ -2217,17 +2279,26 @@ const AIEngine = (() => {
           pushLine(bX2 - filPx, yOutBot, bX2, yOutBot - filPx, { cx: bX2 - filPx, cy: yOutBot - filPx, r: filPx, sweep: 1 });
         }
 
-        // ── 2) 내경(축 접촉면) 상/하 가로선 = 내륜 안쪽면 ──
-        pushLine(bX1 + filPx, yBoreTop, bX2 - filPx, yBoreTop);
-        pushLine(bX1 + filPx, yBoreBot, bX2 - filPx, yBoreBot);
-        if (filPx > 0.5) {
-          pushLine(bX1, yBoreTop - filPx, bX1 + filPx, yBoreTop, { cx: bX1 + filPx, cy: yBoreTop - filPx, r: filPx, sweep: 0 });
-          pushLine(bX2 - filPx, yBoreTop, bX2, yBoreTop - filPx, { cx: bX2 - filPx, cy: yBoreTop - filPx, r: filPx, sweep: 1 });
-          pushLine(bX1, yBoreBot + filPx, bX1 + filPx, yBoreBot, { cx: bX1 + filPx, cy: yBoreBot + filPx, r: filPx, sweep: 1 });
-          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot + filPx, { cx: bX2 - filPx, cy: yBoreBot + filPx, r: filPx, sweep: 0 });
-        }
+        // ── 2) 내륜/외륜을 나누는 반지름방향 밴드 경계선 (전체 폭) ──
+        //   내륜 안쪽면(축 접촉) = ±rBore
+        pushLine(bX1, yBoreTop, bX2, yBoreTop);
+        pushLine(bX1, yBoreBot, bX2, yBoreBot);
 
-        // ── 3) 볼 원 (십자표시 없는 순수 원, _noCross) ──
+        // ── 3) 레이스 홈 경계선 — ★KS(사용자 #2): 볼에 붙은 직선, 볼 구간 삭제 ──
+        //   홈은 곡선 아크가 아니라 직선(어깨선). 볼 원과 겹치는 중앙 구간
+        //   (gapL~gapR)은 그리지 않아 "볼과 홈이 딱 붙어있음"이 육안 확인됨.
+        //   외륜/내륜 어깨선은 볼 극(top/bottom) 높이에 맞춰 볼에 접함.
+        const raceStraight = (yShoulder) => {
+          pushLine(bX1, yShoulder, gapL, yShoulder);   // 볼 왼쪽 금속
+          pushLine(gapR, yShoulder, bX2, yShoulder);   // 볼 오른쪽 금속
+          // 중앙(gapL~gapR)은 볼과 붙으므로 선 없음
+        };
+        raceStraight(yOuterInnerTop);  // 상단 외륜 어깨(볼 위 직선)
+        raceStraight(yInnerOuterTop);  // 상단 내륜 어깨(볼 아래 직선)
+        raceStraight(yOuterInnerBot);  // 하단 외륜 어깨
+        raceStraight(yInnerOuterBot);  // 하단 내륜 어깨
+
+        // ── 4) 볼 원 (십자표시 없는 순수 원) — 링밴드 중앙, 홈에 물림 ──
         if (ballDia > 1) {
           const ballTop = DrawingModel.createHole(ballCX, ballCYTop, ballDia, null, 'through');
           ballTop.color = brColor; ballTop._noCross = true;
@@ -2239,22 +2310,70 @@ const AIEngine = (() => {
           doc.elements.push(ballBot);
         }
 
-        // ── 4) 레이스웨이 해칭 — 볼 좌/우 금속 영역(단면)에 빗면 ──
-        //   상단 링: 외경(yOutTop) ~ 내경(yBoreTop), 볼 좌우 2개 사각형만 해칭
-        const gapL = ballCX - ballR;   // 볼 왼쪽 경계
-        const gapR = ballCX + ballR;   // 볼 오른쪽 경계
-        const addHatch = (x1, x2, yTop, yBot) => {
-          if (x2 - x1 < 1) return;
-          const h = DrawingModel.createHatch(
-            [{ x: x1, y: yTop }, { x: x2, y: yTop }, { x: x2, y: yBot }, { x: x1, y: yBot }], 45, 4);
-          h.confidence = CONF.CONFIRMED; h._groupId = brGroupId; doc.elements.push(h);
-        };
-        // 상단 링 (볼 좌/우)
-        addHatch(bX1, gapL, yOutTop, yBoreTop);
-        addHatch(gapR, bX2, yOutTop, yBoreTop);
-        // 하단 링 (볼 좌/우)
-        addHatch(bX1, gapL, yBoreBot, yOutBot);
-        addHatch(gapR, bX2, yBoreBot, yOutBot);
+        // ── 5) 해칭 — ★사용자 #1: 외형선과 동일한 검정선. 금속 전체를 채움 ──
+        //   볼은 holes 레이어에서 흰색으로 위에 덮이므로, 해칭 사각형은 볼과
+        //   겹쳐도 됨. 금속을 볼 주위로 꽉 채워 "해칭이 볼에 딱 붙게" 보이도록:
+        //     상단 외륜 = [bX1~bX2] × [yOutTop ~ 볼윗극(yOuterInnerTop)]  (볼 위 금속)
+        //     상단 내륜 = [bX1~bX2] × [볼아랫극(yInnerOuterTop) ~ yBoreTop] (볼 아래 금속)
+        //     볼 좌측/우측 금속 = 볼 극 사이 높이 × (bX1~gapL, gapR~bX2)
+        //   → 볼이 해칭으로 둘러싸여 홈에 물린 형태.
+        const HFIL = filPx > 1 ? filPx * 0.6 : 0;
+        // 상단: 볼 위 금속(외륜) — 전체 폭
+        addHatchPoly([
+          { x: bX1 + HFIL, y: yOutTop + HFIL },
+          { x: bX2 - HFIL, y: yOutTop + HFIL },
+          { x: bX2 - HFIL, y: yOuterInnerTop },
+          { x: bX1 + HFIL, y: yOuterInnerTop },
+        ]);
+        // 상단: 볼 아래 금속(내륜) — 전체 폭
+        addHatchPoly([
+          { x: bX1 + HFIL, y: yInnerOuterTop },
+          { x: bX2 - HFIL, y: yInnerOuterTop },
+          { x: bX2 - HFIL, y: yBoreTop },
+          { x: bX1 + HFIL, y: yBoreTop },
+        ]);
+        // 상단: 볼 좌측 금속 (볼 극 사이 높이)
+        addHatchPoly([
+          { x: bX1 + HFIL, y: yOuterInnerTop },
+          { x: gapL, y: yOuterInnerTop },
+          { x: gapL, y: yInnerOuterTop },
+          { x: bX1 + HFIL, y: yInnerOuterTop },
+        ]);
+        // 상단: 볼 우측 금속
+        addHatchPoly([
+          { x: gapR, y: yOuterInnerTop },
+          { x: bX2 - HFIL, y: yOuterInnerTop },
+          { x: bX2 - HFIL, y: yInnerOuterTop },
+          { x: gapR, y: yInnerOuterTop },
+        ]);
+        // 하단: 볼 아래 금속(외륜) — 전체 폭
+        addHatchPoly([
+          { x: bX1 + HFIL, y: yOuterInnerBot },
+          { x: bX2 - HFIL, y: yOuterInnerBot },
+          { x: bX2 - HFIL, y: yOutBot - HFIL },
+          { x: bX1 + HFIL, y: yOutBot - HFIL },
+        ]);
+        // 하단: 볼 위 금속(내륜) — 전체 폭
+        addHatchPoly([
+          { x: bX1 + HFIL, y: yBoreBot },
+          { x: bX2 - HFIL, y: yBoreBot },
+          { x: bX2 - HFIL, y: yInnerOuterBot },
+          { x: bX1 + HFIL, y: yInnerOuterBot },
+        ]);
+        // 하단: 볼 좌측 금속
+        addHatchPoly([
+          { x: bX1 + HFIL, y: yInnerOuterBot },
+          { x: gapL, y: yInnerOuterBot },
+          { x: gapL, y: yOuterInnerBot },
+          { x: bX1 + HFIL, y: yOuterInnerBot },
+        ]);
+        // 하단: 볼 우측 금속
+        addHatchPoly([
+          { x: gapR, y: yInnerOuterBot },
+          { x: bX2 - HFIL, y: yInnerOuterBot },
+          { x: bX2 - HFIL, y: yOuterInnerBot },
+          { x: gapR, y: yOuterInnerBot },
+        ]);
 
         // (6) 치수 — B (상단 폭), φD / φd (우측)
         const bDimY = yOutTop - 12;

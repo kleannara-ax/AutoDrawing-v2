@@ -103,7 +103,7 @@ const Renderer = (() => {
     // SVG에서 뒤에 있는 요소가 앞(위)에 렌더링됨
     // hatching → outlines → hiddenlines (숨은선이 외형선 위에)
     const layerOrder = [
-      'hatching', 'outlines', 'hiddenlines', 'centerlines',
+      'background', 'hatching', 'outlines', 'hiddenlines', 'centerlines',
       'holes', 'slots', 'dimensions', 'surfacefinish', 'annotations', 'texts', 'titleblocks', 'selection'
     ];
 
@@ -607,56 +607,75 @@ const Renderer = (() => {
     if (!el.points || el.points.length < 3) return g;
 
     const pointsStr = el.points.map(p => `${p.x},${p.y}`).join(' ');
-    const polygon = createSvgElement('polygon');
-    polygon.setAttribute('points', pointsStr);
-    polygon.setAttribute('fill', 'none');
-    polygon.setAttribute('stroke', el.color || '#475569');
-    polygon.setAttribute('stroke-width', 0.5);
-    g.appendChild(polygon);
+    // ★ 해칭 폴리곤 경계선은 그리지 않음(박스/세로선 방지). 빗금만 그림.
+    //   (외곽/홈 경계선은 outlines 레이어가 별도로 담당)
 
     const bounds = DrawingModel.getElementBounds(el);
     const spacing = el.spacing || 4;
-    const angle = (el.angle || 45) * Math.PI / 180;
+    const angleDeg = (el.angle || 45);
+    const angle = angleDeg * Math.PI / 180;
     const cos = Math.cos(angle), sin = Math.sin(angle);
-    const diag = Math.sqrt(bounds.width ** 2 + bounds.height ** 2);
 
-    const clipId = `clip_${el.id}`;
-    let defs = svg.querySelector('defs');
-    if (!defs) {
-      defs = createSvgElement('defs');
-      svg.insertBefore(defs, svg.firstChild);
-    }
-    const clip = createSvgElement('clipPath');
-    clip.id = clipId;
-    const clipPoly = createSvgElement('polygon');
-    clipPoly.setAttribute('points', pointsStr);
-    clip.appendChild(clipPoly);
-    defs.appendChild(clip);
+    // ── 다각형 내부를 지나는 빗금선을 직접 좌표 계산으로 잘라 그림 ──
+    //   clip-path(userSpaceOnUse)는 drawingLayer transform(zoom/pan) 하에서
+    //   좌표가 어긋나 빗금이 통째로 잘려 사라지는 버그가 있었음(v160 발견).
+    //   → clip-path 없이, 각 빗금선과 다각형 각 변의 교차점을 구해 선분을 그림.
+    const pts = el.points;
+    const N = pts.length;
 
-    const hatchG = createSvgElement('g');
-    hatchG.setAttribute('clip-path', `url(#${clipId})`);
+    // 빗금선 방향(dx,dy), 수직(법선) 방향(nx,ny)
+    const dx = cos, dy = sin;      // 선 진행 방향
+    const nx = -sin, ny = cos;     // offset 이동 방향(법선)
 
+    // 각 꼭짓점을 법선축에 투영해 offset 범위 산출
+    let pmin = Infinity, pmax = -Infinity;
+    pts.forEach(p => { const t = p.x * nx + p.y * ny; pmin = Math.min(pmin, t); pmax = Math.max(pmax, t); });
+
+    // 다각형 중심(선 기준점)
     const cx = bounds.x + bounds.width / 2;
     const cy = bounds.y + bounds.height / 2;
-    const numLines = Math.ceil(diag / spacing) + 2;
+    const cProj = cx * nx + cy * ny;   // 중심의 법선 투영값
 
-    for (let i = -numLines; i <= numLines; i++) {
-      const offset = i * spacing;
-      const x1 = cx + offset * cos - diag * sin;
-      const y1 = cy + offset * sin + diag * cos;
-      const x2 = cx + offset * cos + diag * sin;
-      const y2 = cy + offset * sin - diag * cos;
+    // 선-다각형 교차: 무한직선(점 M, 방향 d)과 폴리곤 변들의 교점 파라미터 수집
+    const hatchColor = el.color || '#475569';
+    const kStart = Math.ceil((pmin - cProj) / spacing);
+    const kEnd = Math.floor((pmax - cProj) / spacing);
 
-      const line = createSvgElement('line');
-      line.setAttribute('x1', x1);
-      line.setAttribute('y1', y1);
-      line.setAttribute('x2', x2);
-      line.setAttribute('y2', y2);
-      line.setAttribute('stroke', el.color || '#475569');
-      line.setAttribute('stroke-width', 0.4);
-      hatchG.appendChild(line);
+    for (let k = kStart; k <= kEnd; k++) {
+      const off = k * spacing;
+      // 빗금선 상의 한 점 M = 중심 + off*법선
+      const mx = cx + off * nx;
+      const my = cy + off * ny;
+      // 직선: P = M + s*d. 폴리곤 각 변과 교차하는 s 값들을 구함
+      const svals = [];
+      for (let i = 0; i < N; i++) {
+        const a = pts[i], b = pts[(i + 1) % N];
+        const ex = b.x - a.x, ey = b.y - a.y;
+        // M + s*d = a + u*e  →  연립해 s,u
+        const denom = dx * (-ey) - dy * (-ex); // = -dx*ey + dy*ex
+        if (Math.abs(denom) < 1e-9) continue;  // 평행
+        const rx = a.x - mx, ry = a.y - my;
+        // s = (rx*(-ey) - ry*(-ex)) / denom ; u = (dx*ry - dy*rx)/denom
+        const s = (rx * (-ey) - ry * (-ex)) / denom;
+        const u = (dx * ry - dy * rx) / denom;
+        if (u >= -1e-6 && u <= 1 + 1e-6) svals.push(s);
+      }
+      if (svals.length < 2) continue;
+      svals.sort((p, q) => p - q);
+      // 교점을 쌍으로 묶어 내부 선분만 그림
+      for (let j = 0; j + 1 < svals.length; j += 2) {
+        const s1 = svals[j], s2 = svals[j + 1];
+        if (s2 - s1 < 0.2) continue;
+        const line = createSvgElement('line');
+        line.setAttribute('x1', mx + s1 * dx);
+        line.setAttribute('y1', my + s1 * dy);
+        line.setAttribute('x2', mx + s2 * dx);
+        line.setAttribute('y2', my + s2 * dy);
+        line.setAttribute('stroke', hatchColor);
+        line.setAttribute('stroke-width', 1.0);   // 외형선(1)과 동일 굵기
+        g.appendChild(line);
+      }
     }
-    g.appendChild(hatchG);
 
     const hitPoly = createSvgElement('polygon');
     hitPoly.setAttribute('points', pointsStr);
