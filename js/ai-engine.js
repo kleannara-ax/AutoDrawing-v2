@@ -2289,13 +2289,15 @@ const AIEngine = (() => {
           pushLine(bX2 - filPx, yOutTop, bX2, yOutTop + filPx, { cx: bX2 - filPx, cy: yOutTop + filPx, r: filPx, sweep: 1 });
           pushLine(bX1 + filPx, yOutBot, bX1, yOutBot - filPx, { cx: bX1 + filPx, cy: yOutBot - filPx, r: filPx, sweep: 1 });
           pushLine(bX2 - filPx, yOutBot, bX2, yOutBot - filPx, { cx: bX2 - filPx, cy: yOutBot - filPx, r: filPx, sweep: 0 });
-          // ── 내경(d) 축 접촉 4꼭짓점 볼록 필렛 (상단 링 아래 / 하단 링 위) ──
+          // ── 내경(d) 축 접촉 4꼭짓점 "볼록(convex)" 필렛 ──
+          //   ★ 베어링은 외부에서 완성된 개별 부품을 끼운 형상 → 축 접촉면 모서리도
+          //     볼록하게 둥글려야 함(오목 언더컷 아님). 아크가 코너 바깥으로 부풀게 sweep 반전.
           //   상단 링 아래-좌: 세로변(bX1,yBoreTop-filPx) → bore변(bX1+filPx,yBoreTop)
-          pushLine(bX1, yBoreTop - filPx, bX1 + filPx, yBoreTop, { cx: bX1 + filPx, cy: yBoreTop - filPx, r: filPx, sweep: 1 });
-          pushLine(bX2, yBoreTop - filPx, bX2 - filPx, yBoreTop, { cx: bX2 - filPx, cy: yBoreTop - filPx, r: filPx, sweep: 0 });
+          pushLine(bX1, yBoreTop - filPx, bX1 + filPx, yBoreTop, { cx: bX1 + filPx, cy: yBoreTop - filPx, r: filPx, sweep: 0 });
+          pushLine(bX2, yBoreTop - filPx, bX2 - filPx, yBoreTop, { cx: bX2 - filPx, cy: yBoreTop - filPx, r: filPx, sweep: 1 });
           //   하단 링 위-좌: bore변(bX1+filPx,yBoreBot) → 세로변(bX1,yBoreBot+filPx)
-          pushLine(bX1 + filPx, yBoreBot, bX1, yBoreBot + filPx, { cx: bX1 + filPx, cy: yBoreBot + filPx, r: filPx, sweep: 1 });
-          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot + filPx, { cx: bX2 - filPx, cy: yBoreBot + filPx, r: filPx, sweep: 0 });
+          pushLine(bX1 + filPx, yBoreBot, bX1, yBoreBot + filPx, { cx: bX1 + filPx, cy: yBoreBot + filPx, r: filPx, sweep: 0 });
+          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot + filPx, { cx: bX2 - filPx, cy: yBoreBot + filPx, r: filPx, sweep: 1 });
         } else {
           // 필렛 없음: 직각 세로변 + bore 가로변
           pushLine(bX1, yOutTop, bX1, yBoreTop);
