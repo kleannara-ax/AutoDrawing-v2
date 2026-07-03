@@ -452,9 +452,10 @@ const Renderer = (() => {
     circle.setAttribute('cx', el.cx);
     circle.setAttribute('cy', el.cy);
     circle.setAttribute('r', r);
-    circle.setAttribute('fill', 'none');
+    // ★ _fillWhite: 뒤 해칭을 원 안에서 가림(베어링 볼 = 빈 원). 그 외엔 투명.
+    circle.setAttribute('fill', el._fillWhite ? '#ffffff' : 'none');
     circle.setAttribute('stroke', el.color || '#a78bfa');
-    circle.setAttribute('stroke-width', 1.5);
+    circle.setAttribute('stroke-width', el.strokeWidth || 1.5);
 
     if (el.holeType === 'tap') {
       circle.setAttribute('stroke-dasharray', '1.5 1.0');
