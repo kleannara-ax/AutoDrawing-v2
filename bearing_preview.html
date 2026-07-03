@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>베어링 미리보기</title>
+<style>
+  body { margin:0; background:#f1f5f9; font-family:sans-serif; }
+  header { background:#1e293b; color:#fff; padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0; }
+  header button { background:#3b82f6; color:#fff; border:0; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:13px; }
+  header button:hover { background:#2563eb; }
+  header label { font-size:12px; display:flex; align-items:center; gap:4px; }
+  header select, header input { font-size:12px; padding:3px 6px; border-radius:4px; border:0; }
+  #status { font-size:12px; color:#94a3b8; }
+  .wrap { display:flex; gap:16px; padding:16px; flex-wrap:wrap; align-items:flex-start; }
+  .panel { background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:8px; }
+  .panel h2 { font-size:13px; margin:2px 0 8px; color:#334155; }
+  svg { background:#fff; display:block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔩 깊은홈 볼베어링 미리보기</h1>
+  <button onclick="location.reload()">↻ 새로고침</button>
+  <label>규격:
+    <select id="desig" onchange="rebuild()">
+      <option value="6310">6310 (d50 D110 B27)</option>
+      <option value="6205">6205 (d25 D52 B15)</option>
+      <option value="6008">6008 (d40 D68 B15)</option>
+      <option value="6320">6320 (d100 D215 B47)</option>
+    </select>
+  </label>
+  <span id="status">로딩중…</span>
+</header>
+<div class="wrap">
+  <div class="panel">
+    <h2>베어링 단면 (확대)</h2>
+    <svg id="drawingSvg" width="520" height="760" xmlns="http://www.w3.org/2000/svg">
+      <g id="drawingLayer"></g>
+    </svg>
+  </div>
+</div>
+
+<script src="/js/drawing-model.js?v=161"></script>
+<script src="/js/ai-engine.js?v=161"></script>
+<script src="/js/renderer.js?v=161"></script>
+<script>
+const SPECS = {
+  '6310': { bore:50, outer:110, width:27, fillet:2 },
+  '6205': { bore:25, outer:52,  width:15, fillet:1 },
+  '6008': { bore:40, outer:68,  width:15, fillet:1 },
+  '6320': { bore:100, outer:215, width:47, fillet:3 },
+};
+
+function buildSpec(desig) {
+  const CONF = AIEngine.CONF, PLACEHOLDER = AIEngine.PLACEHOLDER;
+  const b = SPECS[desig];
+  // 베어링이 올라갈 축 구간을 베어링 폭/외경에 맞춰 넉넉히
+  const segLen = b.width + 6;
+  const segDia = b.bore;
+  return {
+    geometrySpec: {
+      sections: [
+        { id:'S1', length:segLen, lengthConf:CONF.CONFIRMED, diameter:segDia, diameterConf:CONF.CONFIRMED, note:null },
+      ],
+      totalLength:segLen, totalLengthConf:CONF.CONFIRMED,
+      holes:[], slots:[], chamferPositions:[], centerHolePositions:[],
+      hiddenFeatures:[{
+        id:'HF_BR1', section:'S1', type:'bearing', bearingDesignation:desig,
+        bearingBore:b.bore, bearingOuter:b.outer, bearingWidth:b.width, bearingFillet:b.fillet,
+        bearingLeftOffset:3, bearingRightOffset:null, bearingForcedFit:false,
+        confidence:CONF.CONFIRMED,
+      }],
+    },
+    annotationSpec:{
+      partName:PLACEHOLDER.TEXT, partNo:PLACEHOLDER.TEXT, material:PLACEHOLDER.EMPTY,
+      materialConf:CONF.UNCERTAIN, surfaceFinish:PLACEHOLDER.EMPTY, surfaceFinishConf:CONF.UNCERTAIN,
+      unit:'mm', scale:'1:1', projectionMethod:'3각법', paperSize:'A3',
+      chamferSpecs:[], keywaySpecs:[], tapSpecs:[], centerHoleDiameters:[], notes:[],
+    },
+    auxiliaryViews:[], geometricTolerances:[], uncertainElements:[],
+  };
+}
+
+function rebuild() {
+  const st = document.getElementById('status');
+  try {
+    const desig = document.getElementById('desig').value;
+    const spec = buildSpec(desig);
+    const doc = AIEngine.generateFromCustomSpec(spec);
+    window.__DOC = doc;
+    const svg = document.getElementById('drawingSvg');
+    // 레이어 초기화
+    const layer = document.getElementById('drawingLayer');
+    layer.innerHTML = '';
+    Renderer.init(svg);
+    Renderer.render(doc);
+    // 베어링 영역에 맞춰 viewBox 확대
+    const brEls = doc.elements.filter(e => e._groupId && String(e._groupId).includes('bear'));
+    let mnX=1e9,mnY=1e9,mxX=-1e9,mxY=-1e9;
+    brEls.forEach(e=>{
+      const xs=[e.x1,e.x2,e.cx!=null?e.cx-e.diameter/2:null,e.cx!=null?e.cx+e.diameter/2:null];
+      const ys=[e.y1,e.y2,e.cy!=null?e.cy-e.diameter/2:null,e.cy!=null?e.cy+e.diameter/2:null];
+      if(e.points) e.points.forEach(p=>{xs.push(p.x);ys.push(p.y);});
+      xs.forEach(v=>{if(v!=null){mnX=Math.min(mnX,v);mxX=Math.max(mxX,v);}});
+      ys.forEach(v=>{if(v!=null){mnY=Math.min(mnY,v);mxY=Math.max(mxY,v);}});
+    });
+    const pad=30;
+    const vbW=(mxX-mnX)+pad*2, vbH=(mxY-mnY)+pad*2;
+    svg.setAttribute('viewBox', `${mnX-pad} ${mnY-pad} ${vbW} ${vbH}`);
+    svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+    // svg 픽셀 크기를 viewBox 비율에 맞춤(세로로 긴 단면)
+    const targetH = 720;
+    const scale = targetH / vbH;
+    svg.setAttribute('height', Math.round(vbH*scale));
+    svg.setAttribute('width', Math.round(vbW*scale));
+    st.textContent = `✓ ${desig} 렌더 완료 (${new Date().toLocaleTimeString()})`;
+    st.style.color = '#4ade80';
+  } catch(e) {
+    st.textContent = '✗ 오류: ' + e.message;
+    st.style.color = '#f87171';
+    console.error(e);
+  }
+}
+
+window.addEventListener('load', rebuild);
+</script>
+</body>
+</html>
