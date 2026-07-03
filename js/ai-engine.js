@@ -2211,7 +2211,7 @@ const AIEngine = (() => {
         //   · 해칭은 위/아래 금속에만. 볼 좌우 공간엔 해칭 없음.
         //   ★ 볼 지름 = (D-d)*2/3 (사용자 공식). 픽셀: ringBand=(D-d)/2*PX → 볼=ringBand*4/3.
         //     단, 링밴드(rOut-rBore)를 넘지 않도록 상한. 캐비티는 볼을 담도록 볼보다 약간 큼.
-        const ballDia = Math.max(6, Math.min(ringBand * (4 / 3), ringBand * 0.92, bWpx * 0.92));
+        const ballDia = Math.max(6, Math.min(ringBand * (4 / 3), ringBand * 0.92, bWpx * 0.92)) * 0.8;
         const ballR = ballDia / 2;
         // 볼 중심 = 링밴드 중앙(외륜↔내륜 경계 정중앙)
         const ballCYTop = (yOutTop + yBoreTop) / 2;
