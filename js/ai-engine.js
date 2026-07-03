@@ -2265,24 +2265,46 @@ const AIEngine = (() => {
           h.confidence = CONF.CONFIRMED; h._groupId = brGroupId; doc.elements.push(h);
         };
 
-        // ── 1) 외곽 직사각형 (B × D), 4모서리 필렛 r — 하나의 연속 사각형 ──
-        pushLine(bX1 + filPx, yOutTop, bX2 - filPx, yOutTop);   // 상단 변
-        pushLine(bX1 + filPx, yOutBot, bX2 - filPx, yOutBot);   // 하단 변
-        pushLine(bX1, yOutTop + filPx, bX1, yOutBot - filPx);   // 좌측 변 (연속)
-        pushLine(bX2, yOutTop + filPx, bX2, yOutBot - filPx);   // 우측 변 (연속)
-        if (filPx > 0.5) {
-          // ★ KS 규격: 단일 부품(양끝에 더 큰 직경 부품 없음) → 4꼭짓점 "볼록(convex)" 필렛.
-          //   아크 중심을 사각형 안쪽에 두고, 호가 코너 바깥(뾰족한 90°) 쪽으로 부풀게 sweep 반전.
+        // ── 1) 외곽 윤곽 (B × D) — ★KS: 베어링은 도넛형 개별 부품.
+        //   바깥쪽 8꼭짓점 모두 "볼록(convex)" 필렛:
+        //     · 외경(D) 4꼭짓점(위/아래 바깥 모서리)
+        //     · 내경(d)에서 축과 맞닿는 4꼭짓점(bore면 좌/우 끝)
+        //   상단 링 세로변: yOutTop+filPx ~ yBoreTop-filPx (그 사이 bore 구간은 빈 공간).
+        const useFil = filPx > 0.5;
+        // 상단/하단 바깥 가로변
+        pushLine(bX1 + filPx, yOutTop, bX2 - filPx, yOutTop);   // 상단 변(외경)
+        pushLine(bX1 + filPx, yOutBot, bX2 - filPx, yOutBot);   // 하단 변(외경)
+        if (useFil) {
+          // 상단 링 좌/우 세로변 (외경↓ ~ bore↑)
+          pushLine(bX1, yOutTop + filPx, bX1, yBoreTop - filPx);
+          pushLine(bX2, yOutTop + filPx, bX2, yBoreTop - filPx);
+          // 하단 링 좌/우 세로변 (bore↓ ~ 외경↑)
+          pushLine(bX1, yBoreBot + filPx, bX1, yOutBot - filPx);
+          pushLine(bX2, yBoreBot + filPx, bX2, yOutBot - filPx);
+          // 상단 bore 가로변(축 접촉면) — 필렛만큼 짧게
+          pushLine(bX1 + filPx, yBoreTop, bX2 - filPx, yBoreTop);
+          pushLine(bX1 + filPx, yBoreBot, bX2 - filPx, yBoreBot);
+          // ── 외경(D) 4꼭짓점 볼록 필렛 ──
           pushLine(bX1 + filPx, yOutTop, bX1, yOutTop + filPx, { cx: bX1 + filPx, cy: yOutTop + filPx, r: filPx, sweep: 0 });
           pushLine(bX2 - filPx, yOutTop, bX2, yOutTop + filPx, { cx: bX2 - filPx, cy: yOutTop + filPx, r: filPx, sweep: 1 });
           pushLine(bX1 + filPx, yOutBot, bX1, yOutBot - filPx, { cx: bX1 + filPx, cy: yOutBot - filPx, r: filPx, sweep: 1 });
           pushLine(bX2 - filPx, yOutBot, bX2, yOutBot - filPx, { cx: bX2 - filPx, cy: yOutBot - filPx, r: filPx, sweep: 0 });
+          // ── 내경(d) 축 접촉 4꼭짓점 볼록 필렛 (상단 링 아래 / 하단 링 위) ──
+          //   상단 링 아래-좌: 세로변(bX1,yBoreTop-filPx) → bore변(bX1+filPx,yBoreTop)
+          pushLine(bX1, yBoreTop - filPx, bX1 + filPx, yBoreTop, { cx: bX1 + filPx, cy: yBoreTop - filPx, r: filPx, sweep: 1 });
+          pushLine(bX2, yBoreTop - filPx, bX2 - filPx, yBoreTop, { cx: bX2 - filPx, cy: yBoreTop - filPx, r: filPx, sweep: 0 });
+          //   하단 링 위-좌: bore변(bX1+filPx,yBoreBot) → 세로변(bX1,yBoreBot+filPx)
+          pushLine(bX1 + filPx, yBoreBot, bX1, yBoreBot + filPx, { cx: bX1 + filPx, cy: yBoreBot + filPx, r: filPx, sweep: 1 });
+          pushLine(bX2 - filPx, yBoreBot, bX2, yBoreBot + filPx, { cx: bX2 - filPx, cy: yBoreBot + filPx, r: filPx, sweep: 0 });
+        } else {
+          // 필렛 없음: 직각 세로변 + bore 가로변
+          pushLine(bX1, yOutTop, bX1, yBoreTop);
+          pushLine(bX2, yOutTop, bX2, yBoreTop);
+          pushLine(bX1, yBoreBot, bX1, yOutBot);
+          pushLine(bX2, yBoreBot, bX2, yOutBot);
+          pushLine(bX1, yBoreTop, bX2, yBoreTop);
+          pushLine(bX1, yBoreBot, bX2, yBoreBot);
         }
-
-        // ── 2) 내륜/외륜을 나누는 반지름방향 밴드 경계선 (전체 폭) ──
-        //   내륜 안쪽면(축 접촉) = ±rBore
-        pushLine(bX1, yBoreTop, bX2, yBoreTop);
-        pushLine(bX1, yBoreBot, bX2, yBoreBot);
 
         // ── 3) 레이스 홈 경계선 — ★KS(사용자 #2): 볼에 붙은 직선, 볼 구간 삭제 ──
         //   홈은 곡선 아크가 아니라 직선(어깨선). 볼 원과 겹치는 중앙 구간
