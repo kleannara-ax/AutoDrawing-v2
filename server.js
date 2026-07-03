@@ -66,11 +66,23 @@ app.get('/', (req, res) => {
 });
 
 app.get('/app', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // ── 정적 파일 (index: false → / 에서 index.html 자동 서빙 비활성화) ──
-app.use(express.static(__dirname, { index: false }));
+//   ★ JS/CSS/HTML은 no-cache 헤더로 항상 최신 코드 검증(ETag) → 브라우저에
+//     옛 코드가 고착되는 문제 방지. (이미지 등은 기본 캐시 유지)
+app.use(express.static(__dirname, {
+  index: false,
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    if (/\.(?:js|css|html)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  },
+}));
 
 // 주의: /api/projects는 auth-server.js에서 인증 미들웨어와 함께 처리됨
 
