@@ -2143,12 +2143,36 @@ const AIEngine = (() => {
         //   참조 이미지(6rbhFBcx): 폭 B × 전체높이 D 의 직사각형이 중심선(oy) 대칭.
         //   상/하 링 단면(bore d/2 ~ outer D/2)에 해칭, 각 링 중앙에 볼 원,
         //   외곽 모서리·내륜 어깨는 필렛 r 로 라운드. 치수: B(상단), φd/φD(우측).
-        const brB = hf.bearingWidth;      // 폭 (mm, 축방향)
-        const brD = hf.bearingOuter;      // 외경 (mm)
-        const brd = hf.bearingBore;       // 내경 (mm)
-        const brR = hf.bearingFillet || 0; // 필렛 (mm)
+        // ★ v172 근본 수정: 호칭번호(6310 등)가 있으면 KS B 2023 규격표에서
+        //   d/D/B/r 를 항상 재조회하여 사용한다. (예전에 잘못 저장된 D=50 같은
+        //   값이 spec 에 남아 있어도, 규격표의 정확한 D=110 로 자동 교정)
+        //   → 특정 베어링만 손보는 게 아니라, 모든 호칭에 동일 규칙으로 적용.
+        let brB = hf.bearingWidth;       // 폭 (mm, 축방향)
+        let brD = hf.bearingOuter;       // 외경 (mm)
+        let brd = hf.bearingBore;        // 내경 (mm)
+        let brR = hf.bearingFillet || 0; // 필렛 (mm)
         const brLeftOff = hf.bearingLeftOffset;
         const brRightOff = hf.bearingRightOffset;
+
+        if (hf.bearingDesignation && DrawingModel.lookupBearingByDesignation) {
+          const ks = DrawingModel.lookupBearingByDesignation(String(hf.bearingDesignation).trim());
+          if (ks && ks.found) {
+            // 규격표 값이 저장값과 다르면 규격표를 신뢰(교정)
+            if (ks.D > 0 && ks.D !== brD) {
+              console.warn(`[AI-Engine] BEARING ${hf.id}: 저장된 D=${brD} → 규격표 D=${ks.D} 로 교정 (${ks.designation})`);
+              brD = ks.D;
+            }
+            if (ks.d > 0 && ks.d !== brd) brd = ks.d;
+            if (ks.B > 0 && ks.B !== brB) brB = ks.B;
+            if (ks.r > 0 && (!brR || brR !== ks.r)) brR = ks.r;
+          }
+        }
+        // 방어: 외경이 내경 이하이면(잘못된 데이터) 최소 비율 확보로 납작해짐 방지
+        if (!(brD > brd)) {
+          console.warn(`[AI-Engine] BEARING ${hf.id}: D(${brD}) <= d(${brd}) 비정상 → D=d*2.2 보정`);
+          brD = brd * 2.2;
+        }
+
         console.log(`[AI-Engine] BEARING ${hf.id}: desig=${hf.bearingDesignation}, B=${brB}, D=${brD}, d=${brd}, r=${brR}, leftOff=${brLeftOff}, rightOff=${brRightOff}, forced=${hf.bearingForcedFit}`);
         if (!(brB > 0) || !(brD > 0) || !(brd > 0)) return;
 

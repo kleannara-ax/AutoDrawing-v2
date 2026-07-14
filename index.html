@@ -6,7 +6,7 @@
   <title>AutoDrawing — AI 도면 생성 + 편집 시스템</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=170">
+  <link rel="stylesheet" href="css/style.css?v=172">
 </head>
 <body>
   <div id="app">
@@ -18,7 +18,7 @@
         <span>AutoDrawing</span>
         <!-- ★ 실제로 로드된 코드 버전 표시 — 캐시 문제 진단용 -->
         <span id="buildBadge" title="현재 브라우저가 로드한 코드 버전"
-          style="font-size:10px; color:#6b7280; margin-left:8px; font-family:monospace;">v170</span>
+          style="font-size:10px; color:#6b7280; margin-left:8px; font-family:monospace;">v172</span>
       </div>
 
       <!-- 팀 정보 배지 -->
@@ -980,10 +980,10 @@
 
   <!-- Three.js (3D 미리보기용) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  <script src="js/three-csg.js?v=170"></script>
+  <script src="js/three-csg.js?v=172"></script>
 
   <!-- Auth -->
-  <script src="js/auth.js?v=170"></script>
+  <script src="js/auth.js?v=172"></script>
 
   <!-- 인증 체크: 세션 없으면 로그인으로 리디렉트 -->
   <script>
@@ -1027,15 +1027,15 @@
   </script>
 
   <!-- Scripts (v16: DB tab + temp save) -->
-  <script src="js/drawing-model.js?v=170"></script>
-  <script src="js/renderer.js?v=170"></script>
-  <script src="js/editor.js?v=170"></script>
-  <script src="js/history.js?v=170"></script>
-  <script src="js/export.js?v=170"></script>
-  <script src="js/ai-engine.js?v=170"></script>
-  <script src="js/image-analyzer.js?v=170"></script>
-  <script src="js/preview3d.js?v=170"></script>
-  <script src="js/app.js?v=170"></script>
+  <script src="js/drawing-model.js?v=172"></script>
+  <script src="js/renderer.js?v=172"></script>
+  <script src="js/editor.js?v=172"></script>
+  <script src="js/history.js?v=172"></script>
+  <script src="js/export.js?v=172"></script>
+  <script src="js/ai-engine.js?v=172"></script>
+  <script src="js/image-analyzer.js?v=172"></script>
+  <script src="js/preview3d.js?v=172"></script>
+  <script src="js/app.js?v=172"></script>
 
   <!-- ★ 캐시 진단: 실제 로드된 코드 버전(build-id)을 배지에 표시 + 콘솔 로그 -->
   <script>
@@ -1050,7 +1050,7 @@
         // 베어링 최신 코드(단면도)인지 지문 확인
         var hasNewBearing = (typeof AIEngine !== 'undefined');
         console.log('%c[AutoDrawing] 로드된 코드 build-id = ' + build +
-          ' | AIEngine=' + hasNewBearing + ' | 베어링=단면도(v170)',
+          ' | AIEngine=' + hasNewBearing + ' | 베어링=단면도(v172·D자동교정)',
           'color:#22c55e;font-weight:bold;');
       } catch (e) { console.warn('[buildBadge]', e); }
     })();
