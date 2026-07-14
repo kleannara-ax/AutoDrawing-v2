@@ -13,3 +13,4 @@ data/teams.json
 data/*/
 data/*/backups/
 *.broken-*
+autodrawing_data_backup_*.tar.gz
