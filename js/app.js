@@ -1311,6 +1311,40 @@ const App = (() => {
     _currentProjectId = id;
     _document = JSON.parse(JSON.stringify(proj.document));
 
+    // ★ v169: 저장된 도면이 _spec(파라미터)을 가지고 있으면, 저장 당시의
+    //   (구버전) 렌더 요소를 그대로 복원하지 않고 현재 최신 생성기로 재생성한다.
+    //   → 예전 버전에서 저장한 베어링(간략 기호: 줄3개+원)이 최신 단면도로
+    //     자동 업그레이드된다. (openProject 는 지금까지 elements 를 그대로
+    //     되살리기만 해서, 옛 코드로 저장된 도면은 영원히 옛 모습으로 보였음)
+    let regenerated = false;
+    try {
+      const savedSpec = _document && _document._spec;
+      if (savedSpec && AIEngine && typeof AIEngine.generateFromCustomSpec === 'function') {
+        const fresh = AIEngine.generateFromCustomSpec(
+          JSON.parse(JSON.stringify(savedSpec))
+        );
+        if (fresh && Array.isArray(fresh.elements) && fresh.elements.length > 0) {
+          // 사용자가 편집기에서 추가한 주석(다듬질/기하공차/데이텀/텍스트)은
+          // _spec 에 없으므로, 재생성 도면에 그대로 이어붙여 보존한다.
+          const annTypes = new Set(['surfacefinish', 'geotolerance', 'datum']);
+          const userAnnots = (_document.elements || []).filter(
+            el => el && (annTypes.has(el.type) || el._userAdded)
+          );
+          if (userAnnots.length) {
+            fresh.elements = fresh.elements.concat(
+              JSON.parse(JSON.stringify(userAnnots))
+            );
+          }
+          fresh._projectName = _document._projectName;
+          _document = fresh;
+          regenerated = true;
+          console.log('[App:openProject] _spec 기반 최신 생성기로 도면 재생성 완료');
+        }
+      }
+    } catch (e) {
+      console.error('[App:openProject] 재생성 실패 → 저장된 요소 그대로 사용', e);
+    }
+
     // DB 화면 닫고 편집기로
     // ★ classList만 사용 — inline style.display 설정 금지
     //   inline style은 CSS class보다 우선하므로, 한번 display:none을 설정하면
@@ -1318,7 +1352,12 @@ const App = (() => {
     document.getElementById('screenDB').classList.remove('active');
 
     enterEditor(_document);
-    showToast(`"${proj.name}" 프로젝트를 불러왔습니다`, 'success');
+    showToast(
+      regenerated
+        ? `"${proj.name}" 프로젝트를 불러왔습니다 (최신 도면으로 재생성)`
+        : `"${proj.name}" 프로젝트를 불러왔습니다`,
+      'success'
+    );
   }
 
   function exportProject(id) {
