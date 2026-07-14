@@ -16,6 +16,9 @@
       <div class="app-logo">
         <i class="fas fa-drafting-compass"></i>
         <span>AutoDrawing</span>
+        <!-- ★ 실제로 로드된 코드 버전 표시 — 캐시 문제 진단용 -->
+        <span id="buildBadge" title="현재 브라우저가 로드한 코드 버전"
+          style="font-size:10px; color:#6b7280; margin-left:8px; font-family:monospace;">v170</span>
       </div>
 
       <!-- 팀 정보 배지 -->
@@ -1033,5 +1036,24 @@
   <script src="js/image-analyzer.js?v=170"></script>
   <script src="js/preview3d.js?v=170"></script>
   <script src="js/app.js?v=170"></script>
+
+  <!-- ★ 캐시 진단: 실제 로드된 코드 버전(build-id)을 배지에 표시 + 콘솔 로그 -->
+  <script>
+    (function () {
+      try {
+        // ai-engine.js 스크립트 태그의 실제 ?v= 값 = 이 브라우저가 로드한 빌드ID
+        var s = Array.from(document.querySelectorAll('script[src*="ai-engine.js"]'))[0];
+        var m = s && s.src.match(/\?v=([0-9a-zA-Z]+)/);
+        var build = m ? m[1] : 'unknown';
+        var badge = document.getElementById('buildBadge');
+        if (badge) badge.textContent = 'build:' + build;
+        // 베어링 최신 코드(단면도)인지 지문 확인
+        var hasNewBearing = (typeof AIEngine !== 'undefined');
+        console.log('%c[AutoDrawing] 로드된 코드 build-id = ' + build +
+          ' | AIEngine=' + hasNewBearing + ' | 베어링=단면도(v170)',
+          'color:#22c55e;font-weight:bold;');
+      } catch (e) { console.warn('[buildBadge]', e); }
+    })();
+  </script>
 </body>
 </html>

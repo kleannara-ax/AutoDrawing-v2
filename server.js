@@ -65,9 +65,28 @@ app.get('/', (req, res) => {
   res.redirect('/login.html');
 });
 
+// ★ 서버가 켜질 때마다 바뀌는 빌드ID — 배포/재시작 시 JS/CSS URL이 무조건
+//   달라져서 브라우저가 옛 파일을 재사용하지 못하도록 강제한다.
+//   (index.html의 정적 ?v=NNN 태그를 이 빌드ID로 실시간 치환해서 서빙)
+const BUILD_ID = Date.now().toString(36);
+console.log('[server] BUILD_ID =', BUILD_ID);
+
+function serveIndexWithBuildId(res) {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  try {
+    let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+    // js/xxx.js?v=170 / css/style.css?v=170 → ?v=<BUILD_ID>
+    html = html.replace(/\?v=[0-9a-zA-Z]+/g, `?v=${BUILD_ID}`);
+    res.type('html').send(html);
+  } catch (e) {
+    res.sendFile(path.join(__dirname, 'index.html'));
+  }
+}
+
 app.get('/app', (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-  res.sendFile(path.join(__dirname, 'index.html'));
+  serveIndexWithBuildId(res);
 });
 
 // ── 정적 파일 (index: false → / 에서 index.html 자동 서빙 비활성화) ──
