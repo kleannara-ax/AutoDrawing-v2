@@ -1743,10 +1743,11 @@ const AIEngine = (() => {
       console.log(`[AI-Engine] Processing HF: ${hf.id}, type=${hf.type}, section=${hf.section}, found sec id=${sec.id}`);
 
       if (hf.type === 'tap-bore') {
-        // ── 나사 피치 테이블 (KS B ISO 규격 보통 나사) ──
-        const THREAD_PITCH = { 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0 };
+        // ── 나사 피치 테이블 (KS B 0201 보통나사 / KS B 0204 가는나사) ──
+        // v176: hiddenFeature.pitch 우선 사용, 없으면 DrawingModel 폴백
+        const THREAD_PITCH = DrawingModel.METRIC_COARSE_PITCH || { 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0 };
         const tapDiam = hf.diameter;                        // 나사 호칭 직경 (mm)
-        const pitch = THREAD_PITCH[tapDiam] || 1.5;        // 기본값 1.5mm
+        const pitch = hf.pitch || THREAD_PITCH[tapDiam] || 1.5;  // v176: 선택된 피치 우선
         const drillDiam = tapDiam - pitch;                  // 드릴 직경 (mm)
         const drillDepthMM = hf.depth + 2;                 // 드릴 깊이 = 탭깊이 + 2mm (여유)
         const drillTriH = 1;                                // 드릴 끝단 삼각형 높이 (mm)
@@ -2540,33 +2541,10 @@ const AIEngine = (() => {
       doc.elements.push(hole);
     });
 
-    // ──── 8. 해칭 ────
-    for (let i = 1; i < sections.length; i++) {
-      const cur = sections[i];
-      const prev = sections[i - 1];
-      if (Math.abs(cur.r - prev.r) < 0.1) continue;
-
-      const x = cur.x;
-      const bigR = Math.max(cur.r, prev.r);
-      const smallR = Math.min(cur.r, prev.r);
-      const hW = 3;
-      const hConf = (cur.diameterConf === CONF.CONFIRMED && prev.diameterConf === CONF.CONFIRMED)
-        ? CONF.CONFIRMED : CONF.ESTIMATED;
-
-      const topH = DrawingModel.createHatch([
-        { x, y: oy - bigR }, { x: x + hW, y: oy - bigR },
-        { x: x + hW, y: oy - smallR }, { x, y: oy - smallR },
-      ], 45, 3);
-      topH.confidence = hConf;
-      doc.elements.push(topH);
-
-      const botH = DrawingModel.createHatch([
-        { x, y: oy + smallR }, { x: x + hW, y: oy + smallR },
-        { x: x + hW, y: oy + bigR }, { x, y: oy + bigR },
-      ], 45, 3);
-      botH.confidence = hConf;
-      doc.elements.push(botH);
-    }
+    // ──── 8. 해칭 (v177: 단차 경계 해칭 제거 — 불필요한 사선 패턴) ────
+    // 이전: 구간 직경 변화 경계에 작은 사각형 해칭을 그렸으나,
+    // PDF 출력 시 모따기 부근에 불필요한 사선 패턴이 나타나 제거함.
+    // 베어링 단면 해칭(addHatch/addHatchPoly)은 별도 처리이므로 영향 없음.
 
     // ──── 9. 텍스트/주석 — v8: KS 규격 표제란(Title Block) ────
     //
@@ -2691,8 +2669,9 @@ const AIEngine = (() => {
 
       // ★ 드릴 규격 표기 — TAP 텍스트 아래에 "Ø'D' 드릴 DP'H'"
       if (hf) {
-        const THREAD_PITCH_ANN = { 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0 };
-        const pitchVal = THREAD_PITCH_ANN[hf.diameter] || 1.5;
+        // v176: 피치 어노테이션 — hiddenFeature.pitch 우선 사용
+        const THREAD_PITCH_ANN = DrawingModel.METRIC_COARSE_PITCH || { 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0 };
+        const pitchVal = hf.pitch || THREAD_PITCH_ANN[hf.diameter] || 1.5;
         const drillD = hf.diameter - pitchVal;
         const drillDP = hf.depth + 2;
         const drillLabel = `Ø${drillD} 드릴 DP${drillDP}`;

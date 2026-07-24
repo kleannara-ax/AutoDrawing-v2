@@ -646,6 +646,255 @@ const DrawingModel = (() => {
     return { found: false, reason: 'not_found', designation: key };
   }
 
+  // ============================================================
+  // 나사 피치 테이블 (KS B 0201 / KS B 0204)
+  // ============================================================
+
+  /**
+   * 미터 보통 나사 — KS B 0201
+   * 각 M 사이즈에 대해 피치값이 1개로 고정
+   * key: 나사 호칭 직경(mm), value: 피치(mm)
+   */
+  const METRIC_COARSE_PITCH = {
+    1: 0.25, 1.1: 0.25, 1.2: 0.25, 1.4: 0.3, 1.6: 0.35, 1.8: 0.35,
+    2: 0.4, 2.2: 0.45, 2.5: 0.45,
+    3: 0.5, 3.5: 0.6,
+    4: 0.7, 4.5: 0.75,
+    5: 0.8,
+    6: 1, 7: 1,
+    8: 1.25, 9: 1.25,
+    10: 1.5, 11: 1.5,
+    12: 1.75,
+    14: 2, 16: 2,
+    18: 2.5, 20: 2.5, 22: 2.5,
+    24: 3, 27: 3,
+    30: 3.5, 33: 3.5,
+    36: 4, 39: 4,
+    42: 4.5, 45: 4.5,
+    48: 5, 52: 5,
+    56: 5.5, 60: 5.5,
+    64: 6, 68: 6
+  };
+
+  /**
+   * 미터 가는 나사 — KS B 0204
+   * 각 M 사이즈에 대해 피치값이 복수 (배열, 큰 값 → 작은 값 순)
+   * key: 나사 호칭 직경(mm), value: [피치1, 피치2, ...] (mm)
+   */
+  const METRIC_FINE_PITCH = {
+    1: [0.2],
+    1.1: [0.2],
+    1.2: [0.2],
+    1.4: [0.2],
+    1.6: [0.2],
+    1.8: [0.2],
+    2: [0.25],
+    2.2: [0.25],
+    2.5: [0.35],
+    3: [0.35],
+    3.5: [0.35],
+    4: [0.5],
+    4.5: [0.5],
+    5: [0.5],
+    5.5: [0.5],
+    6: [0.75],
+    7: [0.75],
+    8: [1, 0.75],
+    9: [1, 0.75],
+    10: [1.25, 1, 0.75],
+    11: [1, 0.75],
+    12: [1.5, 1.25, 1],
+    14: [1.5, 1.25, 1],
+    15: [1.5, 1],
+    16: [1.5, 1],
+    17: [1.5, 1],
+    18: [2, 1.5, 1],
+    20: [2, 1.5, 1],
+    22: [2, 1.5, 1],
+    24: [2, 1.5, 1],
+    25: [2, 1.5, 1],
+    26: [1.5],
+    27: [2, 1.5, 1],
+    28: [2, 1.5, 1],
+    30: [3, 2, 1.5, 1],
+    32: [2, 1.5],
+    33: [3, 2, 1.5],
+    35: [1.5],
+    36: [3, 2, 1.5],
+    38: [1.5],
+    39: [3, 2, 1.5],
+    40: [3, 2, 1.5],
+    42: [4, 3, 2, 1.5],
+    45: [4, 3, 2, 1.5],
+    48: [4, 3, 2, 1.5],
+    50: [3, 2, 1.5],
+    52: [4, 3, 2, 1.5],
+    55: [4, 3, 2, 1.5],
+    56: [4, 3, 2, 1.5],
+    58: [4, 3, 2, 1.5],
+    60: [4, 3, 2, 1.5],
+    62: [4, 3, 2, 1.5],
+    64: [4, 3, 2, 1.5],
+    65: [4, 3, 2, 1.5],
+    68: [4, 3, 2, 1.5],
+    70: [4, 3, 2, 1.5],
+    72: [4, 3, 2, 1.5],
+    75: [4, 3, 2, 1.5],
+    76: [4, 3, 2, 1.5],
+    78: [2],
+    80: [4, 3, 2, 1.5],
+    82: [2],
+    85: [4, 3, 2],
+    90: [4, 3, 2],
+    95: [4, 3, 2],
+    100: [4, 3, 2],
+    105: [4, 3, 2],
+    110: [4, 3, 2],
+    115: [4, 3, 2],
+    120: [4, 3, 2],
+    125: [4, 3, 2],
+    130: [6, 4, 3, 2],
+    135: [4, 3, 2],
+    140: [6, 4, 3, 2],
+    145: [4, 3, 2],
+    150: [6, 4, 3, 2],
+    155: [4, 3],
+    160: [6, 4, 3],
+    165: [6, 4, 3],
+    170: [6, 4, 3],
+    175: [6, 4, 3],
+    180: [6, 4, 3],
+    185: [6, 4, 3],
+    190: [6, 4, 3],
+    195: [6, 4, 3],
+    200: [6, 4, 3],
+    205: [6, 4, 3],
+    210: [6, 4, 3],
+    215: [4, 3],
+    220: [6, 4, 3],
+    225: [6, 4, 3],
+    230: [6, 4, 3],
+    235: [6, 4, 3],
+    240: [6, 4, 3],
+    245: [6, 4, 3],
+    250: [6, 4, 3],
+    255: [6, 4],
+    260: [6, 4],
+    265: [6, 4],
+    270: [6, 4],
+    275: [6, 4],
+    280: [6, 4],
+    285: [6, 4],
+    290: [6, 4],
+    295: [6, 4],
+    300: [6, 4]
+  };
+
+  /**
+   * 나사 피치 조회
+   * @param {string} threadType - 'coarse' (보통나사) 또는 'fine' (가는나사)
+   * @param {number} diameter - M 사이즈 (예: 36)
+   * @returns {object} { found, type, diameter, pitches: [...], defaultPitch }
+   */
+  function lookupThreadPitch(threadType, diameter) {
+    const d = parseFloat(diameter);
+    if (isNaN(d)) return { found: false, reason: 'invalid_diameter', diameter };
+
+    if (threadType === 'coarse') {
+      const pitch = METRIC_COARSE_PITCH[d];
+      if (pitch != null) {
+        return { found: true, type: 'coarse', diameter: d, pitches: [pitch], defaultPitch: pitch };
+      }
+      return { found: false, reason: 'not_found', type: 'coarse', diameter: d };
+    } else if (threadType === 'fine') {
+      const pitches = METRIC_FINE_PITCH[d];
+      if (pitches && pitches.length > 0) {
+        return { found: true, type: 'fine', diameter: d, pitches: [...pitches], defaultPitch: pitches[0] };
+      }
+      return { found: false, reason: 'not_found', type: 'fine', diameter: d };
+    }
+    return { found: false, reason: 'invalid_type', type: threadType, diameter: d };
+  }
+
+  /**
+   * 해당 M 사이즈의 보통나사 피치 반환 (기존 THREAD_PITCH 대체용)
+   * @param {number} diameter - M 사이즈
+   * @returns {number|null} 피치값 또는 null
+   */
+  function getCoarsePitch(diameter) {
+    return METRIC_COARSE_PITCH[parseFloat(diameter)] || null;
+  }
+
+  /**
+   * 미터 보통 나사 M 사이즈 목록 (정렬됨)
+   */
+  function getCoarseSizes() {
+    return Object.keys(METRIC_COARSE_PITCH).map(Number).sort((a, b) => a - b);
+  }
+
+  /**
+   * 미터 가는 나사 M 사이즈 목록 (정렬됨)
+   */
+  function getFineSizes() {
+    return Object.keys(METRIC_FINE_PITCH).map(Number).sort((a, b) => a - b);
+  }
+
+  // ============================================================
+  // 평행 키 및 키홈 치수 테이블 (KS B 1311 : 2009)
+  // ============================================================
+
+  /**
+   * KS B 1311 평행 키 — 축 지름 범위별 키 호칭 치수(b×h) 및 키홈 깊이(t1)
+   *
+   * 각 항목:
+   *   dMin, dMax : 적용하는 축지름 d 범위 (초과~이하)
+   *   b          : 키 폭 (mm)
+   *   h          : 키 높이 (mm)
+   *   t1         : 키홈 깊이 — 축 측 (mm), t1 기준치수
+   *   t2         : 키홈 깊이 — 구멍 측 (mm), t2 기준치수
+   *
+   * 비고: 공차는 무시 (사용자 요청)
+   */
+  const KS_KEY_TABLE = [
+    { dMin: 6,   dMax: 8,   b: 2,  h: 2,  t1: 1.2, t2: 1.0 },
+    { dMin: 8,   dMax: 10,  b: 3,  h: 3,  t1: 1.8, t2: 1.4 },
+    { dMin: 10,  dMax: 12,  b: 4,  h: 4,  t1: 2.5, t2: 1.8 },
+    { dMin: 12,  dMax: 17,  b: 5,  h: 5,  t1: 3.0, t2: 2.3 },
+    { dMin: 17,  dMax: 22,  b: 6,  h: 6,  t1: 3.5, t2: 2.8 },
+    { dMin: 22,  dMax: 30,  b: 8,  h: 7,  t1: 4.0, t2: 3.3 },
+    { dMin: 30,  dMax: 38,  b: 10, h: 8,  t1: 5.0, t2: 3.3 },
+    { dMin: 38,  dMax: 44,  b: 12, h: 8,  t1: 5.0, t2: 3.3 },
+    { dMin: 44,  dMax: 50,  b: 14, h: 9,  t1: 5.5, t2: 3.8 },
+    { dMin: 50,  dMax: 58,  b: 16, h: 10, t1: 6.0, t2: 4.3 },
+    { dMin: 58,  dMax: 65,  b: 18, h: 11, t1: 7.0, t2: 4.4 },
+    { dMin: 65,  dMax: 75,  b: 20, h: 12, t1: 7.5, t2: 4.9 },
+    { dMin: 75,  dMax: 85,  b: 22, h: 14, t1: 9.0, t2: 5.4 },
+    { dMin: 85,  dMax: 95,  b: 25, h: 14, t1: 9.0, t2: 5.4 },
+    { dMin: 95,  dMax: 110, b: 28, h: 16, t1: 10.0, t2: 6.4 },
+  ];
+
+  /**
+   * 축 지름(d)에 해당하는 평행 키 규격 조회
+   * @param {number} shaftDiam - 축 지름 (mm)
+   * @returns {object} { found, dMin, dMax, b, h, t1, t2 } 또는 { found:false, reason }
+   */
+  function lookupKeyByShaftDiam(shaftDiam) {
+    const d = parseFloat(shaftDiam);
+    if (isNaN(d) || d <= 0) return { found: false, reason: 'invalid_diameter' };
+    for (const row of KS_KEY_TABLE) {
+      if (d > row.dMin && d <= row.dMax) {
+        return { found: true, dMin: row.dMin, dMax: row.dMax, b: row.b, h: row.h, t1: row.t1, t2: row.t2 };
+      }
+    }
+    // 경계값 처리: d == dMin (예: d=6)
+    for (const row of KS_KEY_TABLE) {
+      if (d >= row.dMin && d <= row.dMax) {
+        return { found: true, dMin: row.dMin, dMax: row.dMax, b: row.b, h: row.h, t1: row.t1, t2: row.t2 };
+      }
+    }
+    return { found: false, reason: 'out_of_range', diameter: d };
+  }
+
   /**
    * 다듬질 기호 (Surface Finish Symbol)
    *
@@ -955,6 +1204,14 @@ const DrawingModel = (() => {
     lookupSnapRingByShaft,
     DEEP_GROOVE_BEARING_TABLE,
     lookupBearingByDesignation,
+    METRIC_COARSE_PITCH,
+    METRIC_FINE_PITCH,
+    lookupThreadPitch,
+    getCoarsePitch,
+    getCoarseSizes,
+    getFineSizes,
+    KS_KEY_TABLE,
+    lookupKeyByShaftDiam,
     createGeometricTolerance,
     createDatum,
     createBreakLine,
