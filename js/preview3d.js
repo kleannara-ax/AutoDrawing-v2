@@ -7,6 +7,8 @@
    - 마우스 스크롤: 확대/축소
    - v122: 나사구멍(tap-bore) 3D 표현 (끝면 중심 구멍)
    - v126: 체인스프라켓(chain sprocket) 3D 표현 (기어본체 + 보스 + 톱니)
+   - v173: 깊은홈 볼베어링(deep groove ball bearing) 3D 표현
+           외륜·내륜 LatheGeometry 회전체 + 볼 8개(45°간격) + CSG 클리핑
    ============================================================ */
 
 const Preview3D = (() => {
@@ -255,6 +257,12 @@ const Preview3D = (() => {
     (chainGears || []).forEach(cg => {
       if (cg.outerDiam > maxDiam) maxDiam = cg.outerDiam;
     });
+    // v173: 베어링 외경(D)도 최대 직경에 포함 (카메라 거리·그리드 계산용)
+    (hiddenFeatures || []).forEach(hf => {
+      if (hf.type === 'bearing' && hf.bearingOuter > 0) {
+        maxDiam = Math.max(maxDiam, hf.bearingOuter);
+      }
+    });
 
     // 스케일: 전체 길이를 ~6 유닛에 맞춤
     const scale = 6 / Math.max(totalLength, 1);
@@ -288,7 +296,8 @@ const Preview3D = (() => {
     let curY = -totalScaledLen / 2;
 
     // ★ v124: CSG Boolean Subtraction — 실제 구멍/홈 절삭
-    const THREAD_PITCH = { 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0, 20: 2.5, 24: 3.0 };
+    // v176: DrawingModel.METRIC_COARSE_PITCH를 폴백으로 사용 (hiddenFeature.pitch 우선)
+    const THREAD_PITCH = DrawingModel.METRIC_COARSE_PITCH || { 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0, 20: 2.5, 24: 3.0 };
     const tapFeatures = (hiddenFeatures || []).filter(hf => hf.type === 'tap-bore');
     const keywayFeatures = (hiddenFeatures || []).filter(hf => hf.type === 'keyway');
     const snapRingFeatures = (hiddenFeatures || []).filter(hf => hf.type === 'snapring');
@@ -364,7 +373,8 @@ const Preview3D = (() => {
 
           const tapDiam = hf.diameter || 10;
           const tapDepth = hf.depth || 20;
-          const pitch = THREAD_PITCH[tapDiam] || 1.5;
+          // v176: hiddenFeature에 저장된 피치 우선 사용, 없으면 보통나사 테이블 폴백
+          const pitch = hf.pitch || THREAD_PITCH[tapDiam] || 1.5;
           const drillDiam = tapDiam - pitch;
           const drillDepth = tapDepth + 2;
 
@@ -1064,6 +1074,377 @@ const Preview3D = (() => {
         }
       }
     });
+
+    // ★ v173: 깊은 홈 볼베어링 3D — LatheGeometry 회전체 + 8개 볼
+    //
+    // 구현 방식:
+    //   1. 2D 단면도(ai-engine.js 참조)의 외륜·내륜 프로파일을 LatheGeometry로 360° 회전
+    //   2. 볼 8개를 45° 간격으로 배치 (SphereGeometry)
+    //   3. 볼이 레이스 홈(race groove) 밖으로 돌출되지 않도록 CSG intersect 클리핑
+    //
+    // 좌표계 (group.rotation.x=-PI/2 적용 전):
+    //   Y축 = shaft 축 방향, XZ평면 = 반지름 방향
+    //   LatheGeometry: x=반지름, y=축방향(Y)
+
+    const bearingFeatures = (hiddenFeatures || []).filter(hf => hf.type === 'bearing');
+
+    if (bearingFeatures.length > 0) {
+      // 베어링 재질 — 크롬 느낌의 밝은 금속
+      const bearingOuterMat = new THREE.MeshStandardMaterial({
+        color: 0xb0b8c4, metalness: 0.35, roughness: 0.45, flatShading: false,
+      });
+      const bearingInnerMat = new THREE.MeshStandardMaterial({
+        color: 0xc0c8d0, metalness: 0.35, roughness: 0.45, flatShading: false,
+      });
+      const bearingBallMat = new THREE.MeshStandardMaterial({
+        color: 0xd8dce5, metalness: 0.6, roughness: 0.2, flatShading: false,
+      });
+      const bearingBoreMat = new THREE.MeshStandardMaterial({
+        color: 0x111118, metalness: 0.0, roughness: 1.0, side: THREE.BackSide,
+      });
+      const bearingCapMat = new THREE.MeshStandardMaterial({
+        color: 0xb0b8c4, metalness: 0.35, roughness: 0.45, side: THREE.DoubleSide,
+      });
+
+      const BALL_COUNT = 12;
+      const BALL_SEGMENTS = 32;
+      const BEARING_LATHE_SEGS = 64;
+
+      bearingFeatures.forEach((hf) => {
+        // ── 치수 결정 (mm) — KS 규격표 재조회 ──
+        let brB = hf.bearingWidth;
+        let brD = hf.bearingOuter;
+        let brd = hf.bearingBore;
+        let brR = hf.bearingFillet || 0;
+
+        if (hf.bearingDesignation && typeof DrawingModel !== 'undefined' && DrawingModel.lookupBearingByDesignation) {
+          const ks = DrawingModel.lookupBearingByDesignation(String(hf.bearingDesignation).trim());
+          if (ks && ks.found) {
+            if (ks.D > 0) brD = ks.D;
+            if (ks.d > 0) brd = ks.d;
+            if (ks.B > 0) brB = ks.B;
+            if (ks.r > 0) brR = ks.r;
+          }
+        }
+
+        if (!(brD > brd) || !(brB > 0) || !(brD > 0) || !(brd > 0)) return;
+
+        console.log(`[Preview3D] BEARING ${hf.id}: desig=${hf.bearingDesignation}, D=${brD}, d=${brd}, B=${brB}, r=${brR}`);
+
+        // ── 3D 스케일 변환 (mm → 3D 유닛) ──
+        const outerR = (brD / 2) * scale;    // 외경 반지름
+        const boreR = (brd / 2) * scale;     // 내경 반지름
+        const halfW = (brB / 2) * scale;     // 폭의 절반
+        const filR = Math.min((brR || 0.5) * scale, halfW / 4, (outerR - boreR) / 4);
+
+        // ── 볼 크기 계산 (2D ai-engine.js 공식 그대로) ──
+        const ringBand = outerR - boreR;
+        const ballDia3d = Math.max(0.01, Math.min(ringBand * (4 / 3), ringBand * 0.92, halfW * 2 * 0.92)) * 0.72;
+        const ballR3d = ballDia3d / 2;
+
+        // 볼 중심 반지름 (외경과 내경의 중간)
+        const ballCenterR = (outerR + boreR) / 2;
+
+        // ── 레이스 홈 어깨 위치 (2D와 동일 공식) ──
+        const SHOULDER_F = 0.72;
+        const shoulderOff = ballR3d * SHOULDER_F;    // 어깨선의 볼 중심 대비 반지름 오프셋
+        const outerInnerR = ballCenterR + shoulderOff;   // 외륜 안쪽면 (홈 바닥) 반지름
+        const innerOuterR = ballCenterR - shoulderOff;   // 내륜 바깥면 (홈 바닥) 반지름
+
+        // ── Y축 위치 (축 방향) ──
+        const sec = sections.find(s => s.id === hf.section);
+        if (!sec) return;
+        const secInfo = sectionYMap[sec.id];
+        if (!secInfo) return;
+
+        const sectionLenMm = sec.length || 1;
+        const brLeftOff = hf.bearingLeftOffset;
+        const brRightOff = hf.bearingRightOffset;
+
+        let bearingYCenter;
+        if (brLeftOff != null && !isNaN(brLeftOff)) {
+          bearingYCenter = secInfo.yStart + (brLeftOff + brB / 2) * scale;
+        } else if (brRightOff != null && !isNaN(brRightOff)) {
+          bearingYCenter = secInfo.yEnd - (brRightOff + brB / 2) * scale;
+        } else {
+          bearingYCenter = (secInfo.yStart + secInfo.yEnd) / 2;
+        }
+
+        const yMin = bearingYCenter - halfW;
+        const yMax = bearingYCenter + halfW;
+
+        // ── 홈 곡면 파라미터 ──
+        // 볼이 들어가는 홈(race groove)은 볼 반지름과 같은 곡률의 원호형 홈
+        // 홈 단면: 볼 중심에서 어깨까지의 원호 (반지름 = ballR3d)
+        const grooveR = ballR3d * 1.04;  // 홈 곡률 반지름 (볼보다 약간 큼)
+        const grooveHalfAngle = Math.asin(Math.min(1, shoulderOff / grooveR));
+
+        // ── A. 외륜 (Outer Ring) — LatheGeometry ──
+        // 단면 프로파일 (x=반지름, y=축방향):
+        //   외면(outerR, yMin) → 필렛 → 외면(outerR, yMax) → 필렛
+        //   → 안쪽면(홈 어깨) → 홈 곡선 → 안쪽면 → 닫힘
+        {
+          const profile = [];
+          const FSEGS = 8;
+
+          // 왼쪽 하단: 안쪽(홈 어깨)에서 시작
+          profile.push(new THREE.Vector2(outerInnerR, yMin));
+
+          // 왼쪽 변: 위로 올라감 (안쪽면 → 외면)
+          if (filR > 0.001) {
+            // 내경→외경 코너 필렛 (yMin 쪽)
+            profile.push(new THREE.Vector2(outerR - filR, yMin));
+            for (let i = 1; i <= FSEGS; i++) {
+              const a = Math.PI / 2 * (1 - i / FSEGS);
+              profile.push(new THREE.Vector2(
+                outerR - filR + filR * Math.sin(a),
+                yMin + filR - filR * Math.cos(a)
+              ));
+            }
+          } else {
+            profile.push(new THREE.Vector2(outerR, yMin));
+          }
+
+          // 외면 상부
+          if (filR > 0.001) {
+            profile.push(new THREE.Vector2(outerR, yMax - filR));
+            for (let i = 1; i <= FSEGS; i++) {
+              const a = Math.PI / 2 * (i / FSEGS);
+              profile.push(new THREE.Vector2(
+                outerR - filR + filR * Math.cos(a),
+                yMax - filR + filR * Math.sin(a)
+              ));
+            }
+          } else {
+            profile.push(new THREE.Vector2(outerR, yMax));
+          }
+
+          // 오른쪽: 외면 → 안쪽면(홈 어깨)으로 내려옴
+          profile.push(new THREE.Vector2(outerInnerR, yMax));
+
+          // 안쪽면: 오른쪽 어깨 → 홈 곡선(오목) → 왼쪽 어깨
+          // 홈 곡선: 볼 자리를 감싸는 오목한 원호
+          const grooveCenterY = bearingYCenter;
+          const GROOVE_SEGS = 16;
+          for (let i = 0; i <= GROOVE_SEGS; i++) {
+            const t = i / GROOVE_SEGS;
+            // 오른쪽 어깨(+shoulderOff)에서 왼쪽 어깨(-shoulderOff)로
+            const angRange = grooveHalfAngle * 2;
+            const ang = grooveHalfAngle - angRange * t;
+            const gy = grooveCenterY + grooveR * Math.sin(ang);
+            const gr = ballCenterR + grooveR * Math.cos(ang);
+            // 외륜 홈: 안쪽이 오목 → 반지름이 ballCenterR 쪽으로 줄어듦
+            profile.push(new THREE.Vector2(gr, gy));
+          }
+
+          const outerRingGeo = new THREE.LatheGeometry(profile, BEARING_LATHE_SEGS);
+          const outerRingMesh = new THREE.Mesh(outerRingGeo, bearingOuterMat.clone());
+          group.add(outerRingMesh);
+
+          // 외륜 양쪽 끝 뚜껑 (고리형)
+          const capGeoL = new THREE.RingGeometry(outerInnerR, outerR, BEARING_LATHE_SEGS);
+          const capML = new THREE.Mesh(capGeoL, bearingCapMat.clone());
+          capML.rotation.x = Math.PI / 2;
+          capML.position.y = yMin;
+          group.add(capML);
+
+          const capGeoR = new THREE.RingGeometry(outerInnerR, outerR, BEARING_LATHE_SEGS);
+          const capMR = new THREE.Mesh(capGeoR, bearingCapMat.clone());
+          capMR.rotation.x = -Math.PI / 2;
+          capMR.position.y = yMax;
+          group.add(capMR);
+        }
+
+        // ── B. 내륜 (Inner Ring) — LatheGeometry ──
+        {
+          const profile = [];
+          const FSEGS = 8;
+
+          // 왼쪽 하단: 내면(bore)에서 시작
+          if (filR > 0.001) {
+            profile.push(new THREE.Vector2(boreR + filR, yMin));
+            for (let i = 1; i <= FSEGS; i++) {
+              const a = Math.PI / 2 * (i / FSEGS);
+              profile.push(new THREE.Vector2(
+                boreR + filR - filR * Math.cos(a),
+                yMin + filR - filR * Math.sin(a)
+              ));
+            }
+          } else {
+            profile.push(new THREE.Vector2(boreR, yMin));
+          }
+
+          // 내면(bore): 아래→위
+          if (filR > 0.001) {
+            profile.push(new THREE.Vector2(boreR, yMax - filR));
+            for (let i = 1; i <= FSEGS; i++) {
+              const a = Math.PI / 2 * (1 - i / FSEGS);
+              profile.push(new THREE.Vector2(
+                boreR + filR - filR * Math.sin(a),
+                yMax - filR + filR * Math.cos(a)
+              ));
+            }
+          } else {
+            profile.push(new THREE.Vector2(boreR, yMax));
+          }
+
+          // 오른쪽: 내면(bore) → 바깥면(홈 어깨)으로 올라감
+          profile.push(new THREE.Vector2(innerOuterR, yMax));
+
+          // 바깥면: 오른쪽 어깨 → 홈 곡선(오목) → 왼쪽 어깨
+          const grooveCenterY = bearingYCenter;
+          const GROOVE_SEGS = 16;
+          for (let i = 0; i <= GROOVE_SEGS; i++) {
+            const t = i / GROOVE_SEGS;
+            const angRange = grooveHalfAngle * 2;
+            const ang = grooveHalfAngle - angRange * t;
+            const gy = grooveCenterY + grooveR * Math.sin(ang);
+            const gr = ballCenterR - grooveR * Math.cos(ang);
+            // 내륜 홈: 바깥이 오목 → 반지름이 ballCenterR 쪽으로 늘어남
+            profile.push(new THREE.Vector2(gr, gy));
+          }
+
+          const innerRingGeo = new THREE.LatheGeometry(profile, BEARING_LATHE_SEGS);
+          const innerRingMesh = new THREE.Mesh(innerRingGeo, bearingInnerMat.clone());
+          group.add(innerRingMesh);
+
+          // 내륜 bore 내벽 (BackSide, 시각적 깊이감)
+          const bLen = yMax - yMin;
+          const bCtr = bearingYCenter;
+          const boreGeo = new THREE.CylinderGeometry(
+            boreR * 0.99, boreR * 0.99, bLen + 0.02, BEARING_LATHE_SEGS, 1, true
+          );
+          const bm = new THREE.Mesh(boreGeo, bearingBoreMat.clone());
+          bm.position.set(0, bCtr, 0);
+          group.add(bm);
+
+          // 내륜 양쪽 끝 뚜껑 (고리형)
+          const capGeoL = new THREE.RingGeometry(boreR, innerOuterR, BEARING_LATHE_SEGS);
+          const capML = new THREE.Mesh(capGeoL, bearingCapMat.clone());
+          capML.rotation.x = Math.PI / 2;
+          capML.position.y = yMin;
+          group.add(capML);
+
+          const capGeoR = new THREE.RingGeometry(boreR, innerOuterR, BEARING_LATHE_SEGS);
+          const capMR = new THREE.Mesh(capGeoR, bearingCapMat.clone());
+          capMR.rotation.x = -Math.PI / 2;
+          capMR.position.y = yMax;
+          group.add(capMR);
+        }
+
+        // ── C. 볼 8개 — 45° 간격 배치 + CSG 클리핑 ──
+        // 볼이 레이스 홈 밖으로 돌출되지 않도록:
+        //   방법: 클리핑 토러스(torus) = 홈 안쪽 공간 → CSG intersect
+        //   또는 간단히: 볼 반지름을 shoulderOff로 제한하여 시각적으로 홈에 묻히게
+        //
+        // ★ 사용자 요구: "볼의 상하 조인트 외부로 볼이 보여선 안된다"
+        //   → 볼을 CSG intersect로 클리핑하여 어깨선 밖으로 돌출 방지
+        //   클리핑 볼륨: 어깨 사이의 원환(torus-like ring)
+        {
+          const useCSGClip = (typeof CSG !== 'undefined');
+
+          for (let i = 0; i < BALL_COUNT; i++) {
+            const angle = (2 * Math.PI / BALL_COUNT) * i;
+            const bx = ballCenterR * Math.cos(angle);
+            const bz = ballCenterR * Math.sin(angle);
+            const by = bearingYCenter;
+
+            if (useCSGClip) {
+              // CSG 클리핑: 볼 ∩ 클리핑 실린더
+              // 클리핑 볼륨: 반지름 outerInnerR ~ innerOuterR 사이, 
+              //              축방향 어깨 범위(shoulderOff*2) 내의 공간
+              // 대신 더 간단한 방법: 구를 생성 후 외륜/내륜 홈 표면 밖의 부분을 잘라냄
+              // → 가장 심플한 방법: 구를 생성하고 바깥쪽/안쪽 실린더로 subtract
+              try {
+                const ballGeo = new THREE.SphereGeometry(ballR3d, BALL_SEGMENTS, BALL_SEGMENTS);
+                const ballMesh = new THREE.Mesh(ballGeo, bearingBallMat);
+                ballMesh.position.set(bx, by, bz);
+                ballMesh.updateMatrix();
+                let ballCSG = CSG.fromMesh(ballMesh);
+
+                // 외측 클리핑: outerInnerR 바깥 부분 제거
+                // 클리핑 실린더 (볼보다 충분히 큰 축방향 길이)
+                const clipH = ballR3d * 3;
+                const outerClipGeo = new THREE.CylinderGeometry(
+                  outerR * 2, outerR * 2, clipH, BALL_SEGMENTS, 1, false
+                );
+                const outerClipMesh = new THREE.Mesh(outerClipGeo, bearingBallMat);
+                outerClipMesh.position.set(0, by, 0);
+                outerClipMesh.updateMatrix();
+
+                const innerClipGeo = new THREE.CylinderGeometry(
+                  outerInnerR, outerInnerR, clipH, BALL_SEGMENTS, 1, false
+                );
+                const innerClipMesh = new THREE.Mesh(innerClipGeo, bearingBallMat);
+                innerClipMesh.position.set(0, by, 0);
+                innerClipMesh.updateMatrix();
+
+                // 외측 링 = 큰 실린더 - outerInnerR 실린더 → 외륜 바깥 부분
+                const outerRingCSG = CSG.fromMesh(outerClipMesh).subtract(CSG.fromMesh(innerClipMesh));
+                // 볼에서 외륜 바깥 부분 제거
+                ballCSG = ballCSG.subtract(outerRingCSG);
+
+                outerClipGeo.dispose();
+                innerClipGeo.dispose();
+
+                // 내측 클리핑: innerOuterR 안쪽 부분 제거
+                const innerCoreGeo = new THREE.CylinderGeometry(
+                  innerOuterR, innerOuterR, clipH, BALL_SEGMENTS, 1, false
+                );
+                const innerCoreMesh = new THREE.Mesh(innerCoreGeo, bearingBallMat);
+                innerCoreMesh.position.set(0, by, 0);
+                innerCoreMesh.updateMatrix();
+                const innerCoreCSG = CSG.fromMesh(innerCoreMesh);
+                // 볼에서 내륜 안쪽 부분 제거
+                ballCSG = ballCSG.subtract(innerCoreCSG);
+
+                innerCoreGeo.dispose();
+
+                // 축방향 클리핑: 어깨선(yMin~yMax) 밖으로 돌출 방지
+                // 위쪽 잘라내기 (y > yMax 부분)
+                const topClipGeo = new THREE.BoxGeometry(outerR * 4, ballR3d * 2, outerR * 4);
+                const topClipMesh = new THREE.Mesh(topClipGeo, bearingBallMat);
+                topClipMesh.position.set(0, yMax + ballR3d, 0);
+                topClipMesh.updateMatrix();
+                ballCSG = ballCSG.subtract(CSG.fromMesh(topClipMesh));
+                topClipGeo.dispose();
+
+                // 아래쪽 잘라내기 (y < yMin 부분)
+                const botClipGeo = new THREE.BoxGeometry(outerR * 4, ballR3d * 2, outerR * 4);
+                const botClipMesh = new THREE.Mesh(botClipGeo, bearingBallMat);
+                botClipMesh.position.set(0, yMin - ballR3d, 0);
+                botClipMesh.updateMatrix();
+                ballCSG = ballCSG.subtract(CSG.fromMesh(botClipMesh));
+                botClipGeo.dispose();
+
+                // CSG 결과 → 메시
+                const identity = new THREE.Matrix4();
+                const clippedBall = CSG.toMesh(ballCSG, identity, bearingBallMat.clone());
+                group.add(clippedBall);
+
+                ballGeo.dispose();
+              } catch (e) {
+                console.warn(`[Preview3D] BEARING ball CSG clip failed for ball ${i}:`, e);
+                // fallback: 클리핑 없이 구 추가
+                const fbGeo = new THREE.SphereGeometry(shoulderOff * 0.95, BALL_SEGMENTS, BALL_SEGMENTS);
+                const fbMesh = new THREE.Mesh(fbGeo, bearingBallMat.clone());
+                fbMesh.position.set(bx, by, bz);
+                group.add(fbMesh);
+              }
+            } else {
+              // CSG 미지원: 볼 크기를 어깨 오프셋으로 제한 (돌출 최소화)
+              const safeR = Math.min(ballR3d, shoulderOff * 0.95);
+              const ballGeo = new THREE.SphereGeometry(safeR, BALL_SEGMENTS, BALL_SEGMENTS);
+              const ballMesh = new THREE.Mesh(ballGeo, bearingBallMat.clone());
+              ballMesh.position.set(bx, by, bz);
+              group.add(ballMesh);
+            }
+          }
+        }
+
+        console.log(`[Preview3D] BEARING ${hf.id}: 3D 생성 완료 (outerR=${outerR.toFixed(3)}, boreR=${boreR.toFixed(3)}, balls=${BALL_COUNT})`);
+      });
+    }
 
     // 그룹 전체를 90° 회전하여 shaft 축 = Z축
     group.rotation.x = -Math.PI / 2;

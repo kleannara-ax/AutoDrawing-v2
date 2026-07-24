@@ -245,6 +245,16 @@ const ImageAnalyzer = (() => {
       const existing = document.getElementById('shaftParamDialog');
       if (existing) existing.remove();
 
+      // CSS keyframes 주입 (한 번만)
+      if (!document.getElementById('bearingSnapAnimStyle')) {
+        const styleEl = document.createElement('style');
+        styleEl.id = 'bearingSnapAnimStyle';
+        styleEl.textContent = `
+          @keyframes fadeInUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+        `;
+        document.head.appendChild(styleEl);
+      }
+
       const overlay = document.createElement('div');
       overlay.id = 'shaftParamDialog';
       overlay.style.cssText = `
@@ -359,18 +369,38 @@ const ImageAnalyzer = (() => {
               부가 정보 (선택)
             </h3>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+              <!-- ===== 좌측 TAP ===== -->
               <div>
                 <label style="font-size:11px; color:#94a3b8; display:block; margin-bottom:4px;">
-                  좌측 TAP (예: M20)
+                  좌측 TAP
                 </label>
-                <div style="display:flex; gap:4px;">
+                <!-- 나사 종류 선택 -->
+                <div style="display:flex; gap:4px; margin-bottom:4px;">
+                  <select id="paramLeftTapType"
+                    style="flex:1; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:11px;">
+                    <option value="">종류 선택</option>
+                    <option value="coarse">보통나사 (KS B 0201)</option>
+                    <option value="fine">가는나사 (KS B 0204)</option>
+                  </select>
+                </div>
+                <!-- M 사이즈 + 깊이 -->
+                <div style="display:flex; gap:4px; margin-bottom:4px;">
                   <input type="text" id="paramLeftTap" placeholder="M20"
                     style="flex:1; padding:6px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
                   <input type="number" id="paramLeftTapDepth" placeholder="깊이"
                     style="width:60px; padding:6px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
                 </div>
+                <!-- 피치 선택 -->
+                <div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">
+                  <label style="font-size:10px; color:#fbbf24; white-space:nowrap;">피치</label>
+                  <select id="paramLeftTapPitch"
+                    style="flex:1; padding:5px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:11px;">
+                    <option value="">종류/사이즈 선택 필요</option>
+                  </select>
+                  <span id="paramLeftTapPitchLabel" style="font-size:10px; color:#6b7280; white-space:nowrap;"></span>
+                </div>
                 <!-- 좌측 카운터보어 -->
-                <div style="margin-top:4px;">
+                <div style="margin-top:2px;">
                   <label style="font-size:10px; color:#a78bfa; cursor:pointer;">
                     <input type="checkbox" id="paramLeftCB" style="margin-right:4px;"> C/B (카운터보어)
                   </label>
@@ -384,18 +414,38 @@ const ImageAnalyzer = (() => {
                   </div>
                 </div>
               </div>
+              <!-- ===== 우측 TAP ===== -->
               <div>
                 <label style="font-size:11px; color:#94a3b8; display:block; margin-bottom:4px;">
-                  우측 TAP (예: M10)
+                  우측 TAP
                 </label>
-                <div style="display:flex; gap:4px;">
+                <!-- 나사 종류 선택 -->
+                <div style="display:flex; gap:4px; margin-bottom:4px;">
+                  <select id="paramRightTapType"
+                    style="flex:1; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:11px;">
+                    <option value="">종류 선택</option>
+                    <option value="coarse">보통나사 (KS B 0201)</option>
+                    <option value="fine">가는나사 (KS B 0204)</option>
+                  </select>
+                </div>
+                <!-- M 사이즈 + 깊이 -->
+                <div style="display:flex; gap:4px; margin-bottom:4px;">
                   <input type="text" id="paramRightTap" placeholder="M10"
                     style="flex:1; padding:6px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
                   <input type="number" id="paramRightTapDepth" placeholder="깊이"
                     style="width:60px; padding:6px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
                 </div>
+                <!-- 피치 선택 -->
+                <div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">
+                  <label style="font-size:10px; color:#fbbf24; white-space:nowrap;">피치</label>
+                  <select id="paramRightTapPitch"
+                    style="flex:1; padding:5px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:11px;">
+                    <option value="">종류/사이즈 선택 필요</option>
+                  </select>
+                  <span id="paramRightTapPitchLabel" style="font-size:10px; color:#6b7280; white-space:nowrap;"></span>
+                </div>
                 <!-- 우측 카운터보어 -->
-                <div style="margin-top:4px;">
+                <div style="margin-top:2px;">
                   <label style="font-size:10px; color:#a78bfa; cursor:pointer;">
                     <input type="checkbox" id="paramRightCB" style="margin-right:4px;"> C/B (카운터보어)
                   </label>
@@ -449,11 +499,19 @@ const ImageAnalyzer = (() => {
             <!-- 베어링(깊은 홈 볼베어링) 갯수 선택 + 동적 입력 -->
             <div style="margin-top:12px; display:flex; align-items:center; gap:8px; margin-bottom:8px;">
               <label style="font-size:12px; color:#38bdf8; font-weight:600;">◎ 베어링 수</label>
-              <input type="number" id="paramBearingCount" value="0" min="0" max="4"
-                style="width:60px; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:13px; text-align:center;">
-              <span style="font-size:10px; color:#6b7280;">0 = 없음, 최대 4 (깊은 홈 볼베어링)</span>
+              <input type="number" id="paramBearingCount" value="0" min="0" max="4" readonly
+                style="width:60px; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#6b7280; font-size:13px; text-align:center; cursor:not-allowed;"
+                title="스냅링을 먼저 입력하세요">
+              <span style="font-size:10px; color:#6b7280;">스냅링 연동 — 자동 설정</span>
             </div>
             <div id="bearingInputs" style="display:grid; gap:8px;"></div>
+            <!-- 베어링 경고 토스트 (우측 하단) -->
+            <div id="bearingSnapWarnToast" style="display:none; position:fixed; bottom:24px; right:24px; z-index:99999;
+              background:#2a1215; border:1px solid #b91c1c; border-radius:10px; padding:12px 20px;
+              box-shadow:0 4px 24px rgba(0,0,0,0.5); font-size:13px; color:#fca5a5; font-weight:600;
+              animation: fadeInUp .3s ease;">
+              ⚠ 스냅링 값을 입력해주세요
+            </div>
           </div>
 
           <!-- 중공축 보조투상도 설정 (중공축 선택 시에만 표시) -->
@@ -579,6 +637,72 @@ const ImageAnalyzer = (() => {
         });
       }
 
+      // ★ v176: 나사 피치 선택 기능 (KS B 0201 보통나사 / KS B 0204 가는나사)
+      function _updateTapPitchOptions(side) {
+        const typeEl = document.getElementById(`param${side}TapType`);
+        const tapEl = document.getElementById(`param${side}Tap`);
+        const pitchEl = document.getElementById(`param${side}TapPitch`);
+        const labelEl = document.getElementById(`param${side}TapPitchLabel`);
+        if (!typeEl || !tapEl || !pitchEl) return;
+
+        const threadType = typeEl.value; // 'coarse' | 'fine' | ''
+        const tapStr = tapEl.value.trim();
+        const mSize = parseFloat(tapStr.replace(/[^0-9.]/g, ''));
+
+        // 피치 셀렉트 초기화
+        pitchEl.innerHTML = '';
+        if (labelEl) labelEl.textContent = '';
+
+        if (!threadType) {
+          pitchEl.innerHTML = '<option value="">종류 선택 필요</option>';
+          return;
+        }
+        if (!tapStr || isNaN(mSize)) {
+          pitchEl.innerHTML = '<option value="">M 사이즈 입력 필요</option>';
+          return;
+        }
+
+        const result = DrawingModel.lookupThreadPitch(threadType, mSize);
+        if (!result.found) {
+          pitchEl.innerHTML = `<option value="">M${mSize} — 해당 규격 없음</option>`;
+          if (labelEl) labelEl.textContent = '⚠';
+          return;
+        }
+
+        if (threadType === 'coarse') {
+          // 보통나사: 피치 1개 고정
+          const p = result.pitches[0];
+          pitchEl.innerHTML = `<option value="${p}">${p}</option>`;
+          pitchEl.style.color = '#34d399';
+          if (labelEl) labelEl.textContent = '(고정)';
+        } else {
+          // 가는나사: 복수 피치 선택
+          result.pitches.forEach((p, idx) => {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.textContent = p;
+            if (idx === 0) opt.selected = true;
+            pitchEl.appendChild(opt);
+          });
+          pitchEl.style.color = '#fbbf24';
+          if (labelEl) labelEl.textContent = `(${result.pitches.length}종)`;
+        }
+      }
+
+      // 좌측/우측 TAP 이벤트 바인딩
+      ['Left', 'Right'].forEach(side => {
+        const typeEl = document.getElementById(`param${side}TapType`);
+        const tapEl = document.getElementById(`param${side}Tap`);
+        if (typeEl) {
+          typeEl.addEventListener('change', () => _updateTapPitchOptions(side));
+        }
+        if (tapEl) {
+          ['input', 'change'].forEach(evt => {
+            tapEl.addEventListener(evt, () => _updateTapPitchOptions(side));
+          });
+        }
+      });
+
       function buildSectionInputs(count) {
         sectionInputsDiv.innerHTML = '';
         
@@ -656,12 +780,14 @@ const ImageAnalyzer = (() => {
           chkR.addEventListener('change', function() { valR.style.display = chkR.checked ? 'inline-block' : 'none'; });
         }
 
-        // 직경 변경 시 중공축 외경 자동 업데이트 + 스냅링/베어링 자동 규격 재계산
+        // 직경 변경 시 중공축 외경 자동 업데이트 + 스냅링/베어링/키홈 자동 규격 재계산
         sectionInputsDiv.querySelectorAll('.sec-diameter').forEach(el => {
           el.addEventListener('input', updateHollowOuterDiam);
           ['input', 'change'].forEach(evt => el.addEventListener(evt, () => {
             if (typeof refreshAllSnapRingBlocks === 'function') refreshAllSnapRingBlocks();
             if (typeof refreshAllBearingBlocks === 'function') refreshAllBearingBlocks();
+            // v178: 직경 변경 시 키홈 KS 규격 재조회
+            if (typeof refreshAllKeywayBlocks === 'function') refreshAllKeywayBlocks();
           }));
         });
         // 길이 변경 시 스냅링/베어링 우측 오프셋 자동 재계산
@@ -702,7 +828,7 @@ const ImageAnalyzer = (() => {
         countInput.addEventListener(evt, onSectionCountChange);
       });
 
-      // ── 키홈 동적 입력 빌더 ──
+      // ── 키홈 동적 입력 빌더 (v178: KS B 1311 자동 규격 조회) ──
       function buildKeywayInputs(kwCount) {
         keywayInputsDiv.innerHTML = '';
         const secCount = parseInt(countInput.value) || 0;
@@ -727,44 +853,125 @@ const ImageAnalyzer = (() => {
                 <option value="side">측면</option>
                 <option value="front">정면</option>
               </select>
-            </div>
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-              <label style="font-size:10px; color:#6b7280;">키 형상:</label>
               <select class="kw-shape" data-kw-idx="${k}" style="padding:4px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#22d3ee; font-size:11px; cursor:pointer;">
                 <option value="obround">양쪽 둥근형</option>
                 <option value="one-side-round">한쪽 둥근형</option>
                 <option value="rect">양쪽 네모형</option>
               </select>
             </div>
+            <!-- v178: KS B 1311 자동 규격 표시 -->
+            <div class="kw-ks-info" data-kw-idx="${k}" style="background:#242836; border:1px solid #2d4a2d; border-radius:6px; padding:6px 8px; margin-bottom:6px; font-size:11px; color:#6b7280;">
+              구간을 선택하면 KS B 1311 규격이 자동 표시됩니다
+            </div>
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:6px;">
               <div>
-                <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">폭 (mm)</label>
-                <input type="number" class="kw-w" data-kw-idx="${k}" placeholder="폭" style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+                <label style="font-size:10px; color:#34d399; display:block; margin-bottom:2px;">폭 b (mm) <span style="color:#6b7280;">KS</span></label>
+                <input type="number" class="kw-w" data-kw-idx="${k}" placeholder="폭" readonly style="width:100%; padding:5px; background:#1a1e28; border:1px solid #2d4a2d; border-radius:6px; color:#34d399; font-size:12px; cursor:default;">
               </div>
               <div>
-                <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">높이 (mm)</label>
-                <input type="number" class="kw-h" data-kw-idx="${k}" placeholder="높이" style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+                <label style="font-size:10px; color:#34d399; display:block; margin-bottom:2px;">높이 h (mm) <span style="color:#6b7280;">KS</span></label>
+                <input type="number" class="kw-h" data-kw-idx="${k}" placeholder="높이" readonly style="width:100%; padding:5px; background:#1a1e28; border:1px solid #2d4a2d; border-radius:6px; color:#34d399; font-size:12px; cursor:default;">
               </div>
               <div>
-                <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">깊이 (mm)</label>
-                <input type="number" class="kw-d" data-kw-idx="${k}" placeholder="깊이" style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+                <label style="font-size:10px; color:#34d399; display:block; margin-bottom:2px;">깊이 t1 (mm) <span style="color:#6b7280;">KS</span></label>
+                <input type="number" class="kw-d" data-kw-idx="${k}" placeholder="깊이" readonly style="width:100%; padding:5px; background:#1a1e28; border:1px solid #2d4a2d; border-radius:6px; color:#34d399; font-size:12px; cursor:default;">
               </div>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:6px;">
+              <div>
+                <label style="font-size:10px; color:#e2e8f0; display:block; margin-bottom:2px;">길이 L (mm)</label>
+                <input type="number" class="kw-len" data-kw-idx="${k}" placeholder="길이" min="1" style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
+              </div>
               <div>
                 <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">좌측 이격 (mm)</label>
                 <input type="number" class="kw-left-off" data-kw-idx="${k}" placeholder="좌측에서 거리" style="width:100%; padding:5px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:12px;">
               </div>
               <div>
-                <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">우측 이격 (mm)</label>
-                <input type="number" class="kw-right-off" data-kw-idx="${k}" placeholder="우측에서 거리" style="width:100%; padding:5px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:12px;">
+                <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">우측 이격 <span style="color:#6b7280;">자동</span></label>
+                <input type="number" class="kw-right-off" data-kw-idx="${k}" placeholder="자동" readonly style="width:100%; padding:5px; background:#1a1e28; border:1px solid #554a20; border-radius:6px; color:#34d399; font-size:12px; cursor:default;">
+                <div class="kw-right-warn" data-kw-idx="${k}" style="display:none; font-size:10px; color:#f87171; margin-top:2px;">⚠ 구간 길이 초과</div>
               </div>
             </div>
-            <div style="font-size:10px; color:#6b7280; margin-top:4px;">
-              * 좌/우 이격 = 해당 구간 끝에서 키홈 시작까지의 거리
+            <div style="font-size:10px; color:#6b7280; margin-top:2px;">
+              * KS B 1311 — 구간 축지름 기반 b×h, t1 자동 선택 / 우측 이격 = 구간길이 − (길이L + 좌측이격) 자동 계산
             </div>
           `;
           keywayInputsDiv.appendChild(block);
+
+          // v178: 구간 선택 시 KS 규격 자동 조회
+          const secSel = block.querySelector('.kw-sec');
+          secSel?.addEventListener('change', () => _refreshKeywayKS(k));
+
+          // 이벤트 바인딩: 좌측 이격·길이·구간 변경 시 우측 이격 자동 계산
+          ['input', 'change'].forEach(evt => {
+            block.querySelector('.kw-left-off')?.addEventListener(evt, () => _updateKeywayRightOffset(k));
+            block.querySelector('.kw-len')?.addEventListener(evt, () => _updateKeywayRightOffset(k));
+            block.querySelector('.kw-sec')?.addEventListener(evt, () => _updateKeywayRightOffset(k));
+          });
+        }
+      }
+
+      // v178: KS B 1311 키 규격 자동 조회 — 구간 축지름 → b, h, t1
+      function _refreshKeywayKS(k) {
+        const secVal = keywayInputsDiv.querySelector(`.kw-sec[data-kw-idx="${k}"]`)?.value || '';
+        const infoEl = keywayInputsDiv.querySelector(`.kw-ks-info[data-kw-idx="${k}"]`);
+        const wEl = keywayInputsDiv.querySelector(`.kw-w[data-kw-idx="${k}"]`);
+        const hEl = keywayInputsDiv.querySelector(`.kw-h[data-kw-idx="${k}"]`);
+        const dEl = keywayInputsDiv.querySelector(`.kw-d[data-kw-idx="${k}"]`);
+        if (!infoEl || !wEl || !hEl || !dEl) return;
+
+        if (!secVal) {
+          infoEl.textContent = '구간을 선택하면 KS B 1311 규격이 자동 표시됩니다';
+          infoEl.style.borderColor = '#2d4a2d';
+          infoEl.style.color = '#6b7280';
+          wEl.value = ''; hEl.value = ''; dEl.value = '';
+          return;
+        }
+
+        const { diam } = _getSectionDims(secVal);
+        if (isNaN(diam)) {
+          infoEl.innerHTML = `<span style="color:#f87171;">⚠ ${secVal} 직경 미입력</span>`;
+          infoEl.style.borderColor = '#7f1d1d';
+          wEl.value = ''; hEl.value = ''; dEl.value = '';
+          return;
+        }
+
+        const result = DrawingModel.lookupKeyByShaftDiam(diam);
+        if (!result.found) {
+          infoEl.innerHTML = `<span style="color:#f87171;">⚠ Ø${diam} — KS B 1311 범위 밖 (${result.reason === 'out_of_range' ? '6~110mm' : ''})</span>`;
+          infoEl.style.borderColor = '#7f1d1d';
+          wEl.value = ''; hEl.value = ''; dEl.value = '';
+          return;
+        }
+
+        // 자동값 설정
+        wEl.value = result.b;
+        hEl.value = result.h;
+        dEl.value = result.t1;
+        infoEl.innerHTML = `<span style="color:#34d399;">✓ Ø${diam} → <b>${result.b}×${result.h}</b> (축지름 ${result.dMin}~${result.dMax}mm) / t1=${result.t1}</span>`;
+        infoEl.style.borderColor = '#2d4a2d';
+      }
+
+      // v178: 우측 이격 자동 계산: 구간 길이 − (키 길이L + 좌측 이격)
+      function _updateKeywayRightOffset(k) {
+        const rightEl = keywayInputsDiv.querySelector(`.kw-right-off[data-kw-idx="${k}"]`);
+        if (!rightEl) return;
+        const secVal = keywayInputsDiv.querySelector(`.kw-sec[data-kw-idx="${k}"]`)?.value || '';
+        const { length: shaftLen } = _getSectionDims(secVal);
+        // v178: 길이(L) 필드 사용 (기존 폭(w) 대신)
+        const kwLen = parseFloat(keywayInputsDiv.querySelector(`.kw-len[data-kw-idx="${k}"]`)?.value);
+        const leftOff = parseFloat(keywayInputsDiv.querySelector(`.kw-left-off[data-kw-idx="${k}"]`)?.value);
+
+        if (!isNaN(shaftLen) && !isNaN(kwLen) && !isNaN(leftOff)) {
+          const right = shaftLen - (kwLen + leftOff);
+          rightEl.value = Math.round(right * 100) / 100;
+          rightEl.style.color = right < 0 ? '#f87171' : '#34d399';
+          const warn = keywayInputsDiv.querySelector(`.kw-right-warn[data-kw-idx="${k}"]`);
+          if (warn) warn.style.display = right < 0 ? 'block' : 'none';
+        } else {
+          rightEl.value = '';
+          const warn = keywayInputsDiv.querySelector(`.kw-right-warn[data-kw-idx="${k}"]`);
+          if (warn) warn.style.display = 'none';
         }
       }
 
@@ -793,6 +1000,14 @@ const ImageAnalyzer = (() => {
       ['input', 'change', 'keyup', 'mouseup', 'pointerup'].forEach(evt => {
         keywayCountInput.addEventListener(evt, onKeywayCountChange);
       });
+
+      // v178: 모든 키홈 블록의 KS 규격 재조회 (직경 변경 시)
+      function refreshAllKeywayBlocks() {
+        const n = parseInt(keywayCountInput.value) || 0;
+        for (let k = 0; k < n; k++) {
+          _refreshKeywayKS(k);
+        }
+      }
 
       // ── 스냅링 동적 입력 빌더 (KS B 1336 C형 멈춤링 자동 선택) ──
       // 선택한 구간(S#)의 축지름/축길이를 읽어온다.
@@ -1013,9 +1228,20 @@ const ImageAnalyzer = (() => {
           const manualThickEl = block.querySelector('.sr-thick');
 
           ['input', 'change'].forEach(evt => {
-            secSel && secSel.addEventListener(evt, () => refreshSnapRingBlock(k));
-            leftOffEl && leftOffEl.addEventListener(evt, () => _updateSnapRingRightOffset(k));
-            manualThickEl && manualThickEl.addEventListener(evt, () => _updateSnapRingRightOffset(k));
+            secSel && secSel.addEventListener(evt, () => {
+              refreshSnapRingBlock(k);
+              // 스냅링 구간 변경 시 베어링 자동 연동
+              _syncBearingFromSnapRings();
+            });
+            leftOffEl && leftOffEl.addEventListener(evt, () => {
+              _updateSnapRingRightOffset(k);
+              // 좌측 오프셋 변경 시 대응하는 베어링의 폭 적합성 재검사
+              _recheckBearingSnapRingFitAll();
+            });
+            manualThickEl && manualThickEl.addEventListener(evt, () => {
+              _updateSnapRingRightOffset(k);
+              _recheckBearingSnapRingFitAll();
+            });
           });
 
           refreshSnapRingBlock(k);
@@ -1043,6 +1269,75 @@ const ImageAnalyzer = (() => {
         });
       }
 
+      // ── 베어링 ↔ 스냅링 연동: 스냅링 구간 변경 시 베어링 자동 설정 ──
+      // 스냅링에서 유효한(구간 선택된) 항목들을 수집하고,
+      // 베어링 수·위치를 자동 설정한다.
+      function _syncBearingFromSnapRings() {
+        // 1) 스냅링 블록에서 유효한 구간(섹션) 목록 수집
+        const validSections = [];
+        snapRingInputsDiv.querySelectorAll('.sr-block').forEach(blk => {
+          const sec = blk.querySelector('.sr-sec')?.value || '';
+          if (sec) validSections.push(sec);
+        });
+        // 중복 제거 및 정렬 (S1, S2 ...)
+        const uniqueSections = [...new Set(validSections)].sort();
+        const newCount = uniqueSections.length;
+
+        // 2) 베어링 카운트 자동 설정
+        bearingCountInput.value = newCount;
+        _lastBrCount = newCount;
+        buildBearingInputs(newCount);
+
+        // 3) 각 베어링에 구간 자동 설정
+        uniqueSections.forEach((sec, idx) => {
+          const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${idx}"]`);
+          if (block) {
+            const secSel = block.querySelector('.br-sec');
+            if (secSel) {
+              secSel.value = sec;
+              refreshBearingBlock(idx);
+            }
+          }
+        });
+
+        // 4) 베어링 입력 활성/비활성 상태 갱신
+        _updateBearingLockState();
+      }
+
+      // 베어링 입력 잠금 상태 업데이트 (스냅링 없으면 차단)
+      function _updateBearingLockState() {
+        const srCount = parseInt(snapRingCountInput.value) || 0;
+        // 유효한 스냅링(구간 선택됨)이 있는지 확인
+        let hasValidSnap = false;
+        snapRingInputsDiv.querySelectorAll('.sr-block').forEach(blk => {
+          if (blk.querySelector('.sr-sec')?.value) hasValidSnap = true;
+        });
+
+        if (srCount === 0 || !hasValidSnap) {
+          // 스냅링 없음 → 베어링 차단
+          bearingCountInput.setAttribute('readonly', '');
+          bearingCountInput.style.color = '#6b7280';
+          bearingCountInput.style.cursor = 'not-allowed';
+          bearingCountInput.title = '스냅링을 먼저 입력하세요';
+        } else {
+          // 스냅링 존재 → 여전히 readonly (자동 연동), 하지만 스타일만 활성처럼
+          bearingCountInput.setAttribute('readonly', '');
+          bearingCountInput.style.color = '#38bdf8';
+          bearingCountInput.style.cursor = 'default';
+          bearingCountInput.title = '스냅링에 연동되어 자동 설정됩니다';
+        }
+      }
+
+      // 베어링 경고 토스트 표시
+      let _bearingToastTimer = null;
+      function _showBearingSnapToast() {
+        const toast = document.getElementById('bearingSnapWarnToast');
+        if (!toast) return;
+        toast.style.display = 'block';
+        if (_bearingToastTimer) clearTimeout(_bearingToastTimer);
+        _bearingToastTimer = setTimeout(() => { toast.style.display = 'none'; }, 3000);
+      }
+
       // ★ 스냅링 수 변경 — 모든 이벤트 유형 등록
       buildSnapRingInputs(0);
       let _lastSrCount = 0;
@@ -1052,6 +1347,8 @@ const ImageAnalyzer = (() => {
         _lastSrCount = n;
         snapRingCountInput.value = n;
         buildSnapRingInputs(n);
+        // 스냅링 수 변경 시 베어링 자동 연동
+        _syncBearingFromSnapRings();
       }
       ['input', 'change', 'keyup', 'mouseup', 'pointerup'].forEach(evt => {
         snapRingCountInput.addEventListener(evt, onSnapRingCountChange);
@@ -1085,6 +1382,85 @@ const ImageAnalyzer = (() => {
           const warn = block.querySelector('.br-right-warn');
           if (warn) warn.style.display = 'none';
         }
+      }
+
+      // ── 베어링 폭 vs 스냅링 오프셋 적합성 검사 ──
+      // 같은 구간에 있는 스냅링의 min(leftOffset, rightOffset)과 베어링 폭 B 비교
+      function _checkBearingSnapRingFit(k) {
+        const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${k}"]`);
+        if (!block) return;
+        const secVal = block.querySelector('.br-sec')?.value || '';
+        const B = parseFloat(block.getAttribute('data-br-B'));
+        if (!secVal || isNaN(B) || B <= 0) return;
+
+        // 같은 구간의 스냅링 찾기
+        snapRingInputsDiv.querySelectorAll('.sr-block').forEach(srBlk => {
+          const srSec = srBlk.querySelector('.sr-sec')?.value || '';
+          if (srSec !== secVal) return;
+
+          const srLeftOff = parseFloat(srBlk.querySelector('.sr-left-off')?.value);
+          const srRightOff = parseFloat(srBlk.querySelector('.sr-right-off')?.value);
+          if (isNaN(srLeftOff) && isNaN(srRightOff)) return;
+
+          // 유효한 오프셋만으로 최솟값 결정
+          let minOff, minSide;
+          if (!isNaN(srLeftOff) && !isNaN(srRightOff)) {
+            if (srLeftOff <= srRightOff) { minOff = srLeftOff; minSide = '좌측오프셋'; }
+            else { minOff = srRightOff; minSide = '우측오프셋'; }
+          } else if (!isNaN(srLeftOff)) {
+            minOff = srLeftOff; minSide = '좌측오프셋';
+          } else {
+            minOff = srRightOff; minSide = '우측오프셋';
+          }
+
+          // 폭과 최솟값이 일치하지 않으면 경고 모달
+          if (Math.abs(B - minOff) > 0.01) {
+            _showBearingSnapMismatchModal(k, secVal, B, minOff, minSide, srLeftOff, srRightOff);
+          }
+        });
+      }
+
+      // 스냅링 오프셋 변경 시 모든 베어링 재검사
+      function _recheckBearingSnapRingFitAll() {
+        bearingInputsDiv.querySelectorAll('.br-block').forEach(blk => {
+          _checkBearingSnapRingFit(parseInt(blk.getAttribute('data-br-idx'), 10));
+        });
+      }
+
+      // 베어링-스냅링 불일치 경고 모달
+      function _showBearingSnapMismatchModal(k, secVal, bearingWidth, minOffset, minSide, leftOff, rightOff) {
+        // 기존 모달 있으면 중복 방지
+        if (document.getElementById('bearingSnapMismatchModal')) return;
+        const modal = document.createElement('div');
+        modal.id = 'bearingSnapMismatchModal';
+        modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100001; display:flex; align-items:center; justify-content:center;';
+
+        // 안내 메시지 조합: 작은값 쪽의 오프셋을 줄이라고 안내
+        const reduceHint = `${minSide}을 줄이거나`;
+
+        modal.innerHTML = `
+          <div style="background:#1e2230; border:1px solid #f59e0b; border-radius:12px; padding:24px; max-width:460px; box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+            <div style="font-size:16px; color:#fbbf24; font-weight:700; margin-bottom:10px;">⚠ 베어링-스냅링 이탈 경고</div>
+            <div style="font-size:13px; color:#e2e8f0; line-height:1.7; margin-bottom:10px;">
+              베어링 ${k + 1} (구간 ${secVal})의 <b>폭(B) = ${bearingWidth}mm</b>가<br>
+              스냅링의 오프셋 최솟값 <b>(${minSide} = ${minOffset}mm)</b>과 일치하지 않습니다.
+            </div>
+            <div style="font-size:12px; color:#94a3b8; margin-bottom:8px;">
+              · 스냅링 좌측오프셋 = ${isNaN(leftOff) ? '미입력' : leftOff + 'mm'}<br>
+              · 스냅링 우측오프셋 = ${isNaN(rightOff) ? '미입력' : rightOff + 'mm'}<br>
+              · 베어링 폭 B = ${bearingWidth}mm
+            </div>
+            <div style="font-size:13px; color:#fbbf24; background:#2a2008; border:1px solid #854d0e; border-radius:8px; padding:10px; margin-bottom:18px; line-height:1.6;">
+              <b>조치 방법:</b><br>
+              스냅링의 <b>${reduceHint}</b> 삽입하려는 베어링을 변경하세요.
+            </div>
+            <div style="display:flex; justify-content:flex-end;">
+              <button id="bsmOk" style="padding:9px 24px; background:linear-gradient(135deg,#f59e0b,#d97706); border:none; border-radius:8px; color:white; cursor:pointer; font-size:13px; font-weight:600;">확인</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(modal);
+        modal.querySelector('#bsmOk').addEventListener('click', () => modal.remove());
       }
 
       // 호칭번호 + 구간 조회 → 규격 표시 + 축지름 일치 검사
@@ -1169,6 +1545,8 @@ const ImageAnalyzer = (() => {
           }
         }
         _updateBearingRightOffset(k);
+        // 베어링 폭 vs 스냅링 오프셋 적합성 검사
+        if (lookup && lookup.found) _checkBearingSnapRingFit(k);
       }
 
       // 억지끼워맞춤 확인 모달
@@ -1344,16 +1722,39 @@ const ImageAnalyzer = (() => {
       }
 
       buildBearingInputs(0);
+      _updateBearingLockState();
       let _lastBrCount = 0;
       function onBearingCountChange() {
+        // 스냅링 연동 자동 전용 — 수동 변경 차단
         const n = Math.min(Math.max(parseInt(bearingCountInput.value) || 0, 0), 4);
         if (n === _lastBrCount) return;
         _lastBrCount = n;
         bearingCountInput.value = n;
         buildBearingInputs(n);
       }
-      ['input', 'change', 'keyup', 'mouseup', 'pointerup'].forEach(evt => {
-        bearingCountInput.addEventListener(evt, onBearingCountChange);
+      // 베어링 카운트 클릭 시 스냅링 없으면 경고 토스트
+      bearingCountInput.addEventListener('mousedown', (e) => {
+        const srCount = parseInt(snapRingCountInput.value) || 0;
+        let hasValidSnap = false;
+        snapRingInputsDiv.querySelectorAll('.sr-block').forEach(blk => {
+          if (blk.querySelector('.sr-sec')?.value) hasValidSnap = true;
+        });
+        if (srCount === 0 || !hasValidSnap) {
+          e.preventDefault();
+          e.stopPropagation();
+          _showBearingSnapToast();
+        }
+      });
+      bearingCountInput.addEventListener('focus', (e) => {
+        const srCount = parseInt(snapRingCountInput.value) || 0;
+        let hasValidSnap = false;
+        snapRingInputsDiv.querySelectorAll('.sr-block').forEach(blk => {
+          if (blk.querySelector('.sr-sec')?.value) hasValidSnap = true;
+        });
+        if (srCount === 0 || !hasValidSnap) {
+          e.target.blur();
+          _showBearingSnapToast();
+        }
       });
 
       // ── 관통 구멍 동적 입력 빌더 ──
@@ -1377,23 +1778,60 @@ const ImageAnalyzer = (() => {
                 ${secOptions}
               </select>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <div style="display:grid; grid-template-columns:1fr; gap:6px; margin-bottom:6px;">
               <div>
                 <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">구멍 직경 (mm)</label>
                 <input type="number" class="th-diam" data-th-idx="${k}" placeholder="예: 5" step="0.1"
                   style="width:100%; padding:5px; background:#242836; border:1px solid #3b3f51; border-radius:6px; color:#e2e8f0; font-size:12px;">
               </div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
               <div>
-                <label style="font-size:10px; color:#6b7280; display:block; margin-bottom:2px;">좌측 이격 (mm, 선택)</label>
-                <input type="number" class="th-offset" data-th-idx="${k}" placeholder="구간 중심" step="0.1"
+                <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">좌측 이격 (mm)</label>
+                <input type="number" class="th-offset" data-th-idx="${k}" placeholder="좌측에서 거리" step="0.1"
                   style="width:100%; padding:5px; background:#242836; border:1px solid #554a20; border-radius:6px; color:#fbbf24; font-size:12px;">
+              </div>
+              <div>
+                <label style="font-size:10px; color:#f59e0b; display:block; margin-bottom:2px;">우측 이격 (mm) <span style="color:#6b7280;">자동</span></label>
+                <input type="number" class="th-right-off" data-th-idx="${k}" placeholder="자동 계산" readonly step="0.1"
+                  style="width:100%; padding:5px; background:#1a1e28; border:1px solid #554a20; border-radius:6px; color:#34d399; font-size:12px; cursor:default;">
+                <div class="th-right-warn" data-th-idx="${k}" style="display:none; font-size:10px; color:#f87171; margin-top:2px;">⚠ 구간 길이 초과</div>
               </div>
             </div>
             <div style="font-size:10px; color:#6b7280; margin-top:4px;">
-              * 수직 관통 — 숨은선(파선)으로 표시
+              * 우측 이격 = 구간 길이 − (직경 + 좌측 이격) 자동 계산
             </div>
           `;
           throughHoleInputsDiv.appendChild(block);
+
+          // 이벤트 바인딩: 좌측 이격·직경·구간 변경 시 우측 이격 자동 계산
+          ['input', 'change'].forEach(evt => {
+            block.querySelector('.th-offset')?.addEventListener(evt, () => _updateThroughHoleRightOffset(k));
+            block.querySelector('.th-diam')?.addEventListener(evt, () => _updateThroughHoleRightOffset(k));
+            block.querySelector('.th-sec')?.addEventListener(evt, () => _updateThroughHoleRightOffset(k));
+          });
+        }
+      }
+
+      // 우측 이격 자동 계산: 구간 길이 − (직경 + 좌측 이격)
+      function _updateThroughHoleRightOffset(k) {
+        const rightEl = throughHoleInputsDiv.querySelector(`.th-right-off[data-th-idx="${k}"]`);
+        if (!rightEl) return;
+        const secVal = throughHoleInputsDiv.querySelector(`.th-sec[data-th-idx="${k}"]`)?.value || '';
+        const { length: shaftLen } = _getSectionDims(secVal);
+        const diam = parseFloat(throughHoleInputsDiv.querySelector(`.th-diam[data-th-idx="${k}"]`)?.value);
+        const leftOff = parseFloat(throughHoleInputsDiv.querySelector(`.th-offset[data-th-idx="${k}"]`)?.value);
+
+        if (!isNaN(shaftLen) && !isNaN(diam) && !isNaN(leftOff)) {
+          const right = shaftLen - (diam + leftOff);
+          rightEl.value = Math.round(right * 100) / 100;
+          rightEl.style.color = right < 0 ? '#f87171' : '#34d399';
+          const warn = throughHoleInputsDiv.querySelector(`.th-right-warn[data-th-idx="${k}"]`);
+          if (warn) warn.style.display = right < 0 ? 'block' : 'none';
+        } else {
+          rightEl.value = '';
+          const warn = throughHoleInputsDiv.querySelector(`.th-right-warn[data-th-idx="${k}"]`);
+          if (warn) warn.style.display = 'none';
         }
       }
 
@@ -1743,11 +2181,20 @@ const ImageAnalyzer = (() => {
           updateHollowOuterDiam();
 
           // TAP 좌측
+          if (pd.leftTapType) {
+            const el = document.getElementById('paramLeftTapType'); if (el) el.value = pd.leftTapType;
+          }
           if (pd.leftTap) {
             const el = document.getElementById('paramLeftTap'); if (el) el.value = pd.leftTap;
           }
           if (pd.leftTapDepth) {
             const el = document.getElementById('paramLeftTapDepth'); if (el) el.value = pd.leftTapDepth;
+          }
+          // v176: 피치 옵션 먼저 빌드 후 선택값 복원
+          _updateTapPitchOptions('Left');
+          if (pd.leftTapPitch != null) {
+            const pEl = document.getElementById('paramLeftTapPitch');
+            if (pEl) pEl.value = pd.leftTapPitch;
           }
           if (pd.leftCB) {
             const chk = document.getElementById('paramLeftCB');
@@ -1756,11 +2203,20 @@ const ImageAnalyzer = (() => {
             const dpEl = document.getElementById('paramLeftCBDepth'); if (dpEl && pd.leftCB.depth) dpEl.value = pd.leftCB.depth;
           }
           // TAP 우측
+          if (pd.rightTapType) {
+            const el = document.getElementById('paramRightTapType'); if (el) el.value = pd.rightTapType;
+          }
           if (pd.rightTap) {
             const el = document.getElementById('paramRightTap'); if (el) el.value = pd.rightTap;
           }
           if (pd.rightTapDepth) {
             const el = document.getElementById('paramRightTapDepth'); if (el) el.value = pd.rightTapDepth;
+          }
+          // v176: 피치 옵션 먼저 빌드 후 선택값 복원
+          _updateTapPitchOptions('Right');
+          if (pd.rightTapPitch != null) {
+            const pEl = document.getElementById('paramRightTapPitch');
+            if (pEl) pEl.value = pd.rightTapPitch;
           }
           if (pd.rightCB) {
             const chk = document.getElementById('paramRightCB');
@@ -1769,19 +2225,22 @@ const ImageAnalyzer = (() => {
             const dpEl = document.getElementById('paramRightCBDepth'); if (dpEl && pd.rightCB.depth) dpEl.value = pd.rightCB.depth;
           }
 
-          // 키홈
+          // 키홈 (v178: KS B 1311 자동 규격 + 길이 L 분리)
           if (pd.keyways && pd.keyways.length > 0) {
             keywayCountInput.value = pd.keyways.length;
             buildKeywayInputs(pd.keyways.length);
             pd.keyways.forEach((kw, k) => {
               const sel = keywayInputsDiv.querySelector(`.kw-sec[data-kw-idx="${k}"]`); if (sel && kw.section) sel.value = kw.section;
-              const wEl = keywayInputsDiv.querySelector(`.kw-w[data-kw-idx="${k}"]`); if (wEl && kw.width) wEl.value = kw.width;
-              const hEl = keywayInputsDiv.querySelector(`.kw-h[data-kw-idx="${k}"]`); if (hEl && kw.height) hEl.value = kw.height;
-              const dEl = keywayInputsDiv.querySelector(`.kw-d[data-kw-idx="${k}"]`); if (dEl && kw.depth) dEl.value = kw.depth;
+              const dirEl = keywayInputsDiv.querySelector(`.kw-dir[data-kw-idx="${k}"]`); if (dirEl && kw.direction) dirEl.value = kw.direction;
+              const shpEl = keywayInputsDiv.querySelector(`.kw-shape[data-kw-idx="${k}"]`); if (shpEl && kw.shape) shpEl.value = kw.shape;
+              // v178: 구간 선택 후 KS 규격 자동 조회 (b, h, t1)
+              _refreshKeywayKS(k);
+              // v178: 길이 L 복원
+              const lenEl = keywayInputsDiv.querySelector(`.kw-len[data-kw-idx="${k}"]`); if (lenEl && kw.width) lenEl.value = kw.width;
+              // 좌측 이격 복원
               const loEl = keywayInputsDiv.querySelector(`.kw-left-off[data-kw-idx="${k}"]`); if (loEl && kw.leftOffset != null) loEl.value = kw.leftOffset;
-              const roEl = keywayInputsDiv.querySelector(`.kw-right-off[data-kw-idx="${k}"]`); if (roEl && kw.rightOffset != null) roEl.value = kw.rightOffset;
-              const dirEl = keywayInputsDiv.querySelector(`.kw-dir[data-kw-idx="${k}"]`); if (dirEl && kw.direction) dirEl.value = kw.direction;  // v116: 키 방향 복원
-              const shpEl = keywayInputsDiv.querySelector(`.kw-shape[data-kw-idx="${k}"]`); if (shpEl && kw.shape) shpEl.value = kw.shape;  // v117: 키 형상 복원
+              // 우측 오프셋 자동 재계산
+              _updateKeywayRightOffset(k);
             });
           }
 
@@ -1813,12 +2272,15 @@ const ImageAnalyzer = (() => {
               const sel = throughHoleInputsDiv.querySelector(`.th-sec[data-th-idx="${k}"]`); if (sel && th.section) sel.value = th.section;
               const dEl = throughHoleInputsDiv.querySelector(`.th-diam[data-th-idx="${k}"]`); if (dEl && th.diameter) dEl.value = th.diameter;
               const oEl = throughHoleInputsDiv.querySelector(`.th-offset[data-th-idx="${k}"]`); if (oEl && th.offset != null) oEl.value = th.offset;
+              // 우측 오프셋 자동 재계산
+              _updateThroughHoleRightOffset(k);
             });
           }
 
           // 베어링(깊은 홈 볼베어링) — v158: 저장/복원 누락 버그 수정
           if (pd.bearings && pd.bearings.length > 0) {
             bearingCountInput.value = pd.bearings.length;
+            _lastBrCount = pd.bearings.length;
             buildBearingInputs(pd.bearings.length);
             pd.bearings.forEach((br, k) => {
               const block = bearingInputsDiv.querySelector(`.br-block[data-br-idx="${k}"]`);
@@ -2034,6 +2496,8 @@ const ImageAnalyzer = (() => {
         // 좌측 TAP
         const leftTap = document.getElementById('paramLeftTap').value.trim();
         const leftTapDepth = parseFloat(document.getElementById('paramLeftTapDepth').value);
+        const leftTapType = document.getElementById('paramLeftTapType')?.value || '';    // v176: 나사 종류
+        const leftTapPitch = parseFloat(document.getElementById('paramLeftTapPitch')?.value); // v176: 피치
         const leftCBChecked = document.getElementById('paramLeftCB')?.checked;
         const leftCBDiam = parseFloat(document.getElementById('paramLeftCBDiam')?.value);
         const leftCBDepth = parseFloat(document.getElementById('paramLeftCBDepth')?.value);
@@ -2047,13 +2511,18 @@ const ImageAnalyzer = (() => {
             depth: leftTapDepth || 30,
             side: 'left',
             confidence: CONF.CONFIRMED,
+            threadType: leftTapType || 'coarse',   // v176: 보통/가는
+            pitch: !isNaN(leftTapPitch) ? leftTapPitch : null,  // v176: 선택된 피치
           };
           // 카운터보어
           if (leftCBChecked && leftCBDiam > 0 && leftCBDepth > 0) {
             hfObj.counterBore = { diameter: leftCBDiam, depth: leftCBDepth };
           }
           hiddenFeatures.push(hfObj);
-          let specStr = `${leftTap} TAP${leftTapDepth ? ' 깊이' + leftTapDepth : ''}`;
+          // v176: 피치 정보 포함 specStr
+          let pitchStr = hfObj.pitch ? `×${hfObj.pitch}` : '';
+          let typeLabel = hfObj.threadType === 'fine' ? ' (가는나사)' : '';
+          let specStr = `${leftTap}${pitchStr} TAP${leftTapDepth ? ' 깊이' + leftTapDepth : ''}${typeLabel}`;
           tapSpecs.push({
             holeId: 'HF_TAP_L',
             section: 'S1',
@@ -2066,6 +2535,8 @@ const ImageAnalyzer = (() => {
         // 우측 TAP
         const rightTap = document.getElementById('paramRightTap').value.trim();
         const rightTapDepth = parseFloat(document.getElementById('paramRightTapDepth').value);
+        const rightTapType = document.getElementById('paramRightTapType')?.value || '';   // v176: 나사 종류
+        const rightTapPitch = parseFloat(document.getElementById('paramRightTapPitch')?.value); // v176: 피치
         const rightCBChecked = document.getElementById('paramRightCB')?.checked;
         const rightCBDiam = parseFloat(document.getElementById('paramRightCBDiam')?.value);
         const rightCBDepth = parseFloat(document.getElementById('paramRightCBDepth')?.value);
@@ -2080,13 +2551,18 @@ const ImageAnalyzer = (() => {
             depth: rightTapDepth || 30,
             side: 'right',
             confidence: CONF.CONFIRMED,
+            threadType: rightTapType || 'coarse',  // v176: 보통/가는
+            pitch: !isNaN(rightTapPitch) ? rightTapPitch : null, // v176: 선택된 피치
           };
           // 카운터보어
           if (rightCBChecked && rightCBDiam > 0 && rightCBDepth > 0) {
             hfObj.counterBore = { diameter: rightCBDiam, depth: rightCBDepth };
           }
           hiddenFeatures.push(hfObj);
-          let specStr = `${rightTap} TAP${rightTapDepth ? ' 깊이' + rightTapDepth : ''}`;
+          // v176: 피치 정보 포함 specStr
+          let pitchStr = hfObj.pitch ? `×${hfObj.pitch}` : '';
+          let typeLabel = hfObj.threadType === 'fine' ? ' (가는나사)' : '';
+          let specStr = `${rightTap}${pitchStr} TAP${rightTapDepth ? ' 깊이' + rightTapDepth : ''}${typeLabel}`;
           tapSpecs.push({
             holeId: 'HF_TAP_R',
             section: lastSec,
@@ -2103,30 +2579,29 @@ const ImageAnalyzer = (() => {
 
         for (let k = 0; k < kwCount; k++) {
           const kwSec = keywayInputsDiv.querySelector(`.kw-sec[data-kw-idx="${k}"]`)?.value || '';
-          let kwW = parseFloat(keywayInputsDiv.querySelector(`.kw-w[data-kw-idx="${k}"]`)?.value);
-          const kwH = parseFloat(keywayInputsDiv.querySelector(`.kw-h[data-kw-idx="${k}"]`)?.value);
-          const kwD = parseFloat(keywayInputsDiv.querySelector(`.kw-d[data-kw-idx="${k}"]`)?.value);
+          // v178: KS B 1311 자동값 — b(폭), h(높이), t1(깊이)
+          const kwB = parseFloat(keywayInputsDiv.querySelector(`.kw-w[data-kw-idx="${k}"]`)?.value);   // 키 폭 b (KS 자동)
+          const kwH = parseFloat(keywayInputsDiv.querySelector(`.kw-h[data-kw-idx="${k}"]`)?.value);   // 키 높이 h (KS 자동)
+          const kwD = parseFloat(keywayInputsDiv.querySelector(`.kw-d[data-kw-idx="${k}"]`)?.value);   // 키홈 깊이 t1 (KS 자동)
+          // v178: 사용자 입력값 — 길이 L, 좌측 이격
+          let kwLen = parseFloat(keywayInputsDiv.querySelector(`.kw-len[data-kw-idx="${k}"]`)?.value); // 키 길이 L
           const kwLeftOff = parseFloat(keywayInputsDiv.querySelector(`.kw-left-off[data-kw-idx="${k}"]`)?.value);
           const kwRightOff = parseFloat(keywayInputsDiv.querySelector(`.kw-right-off[data-kw-idx="${k}"]`)?.value);
           const kwDir = keywayInputsDiv.querySelector(`.kw-dir[data-kw-idx="${k}"]`)?.value || 'side';  // v116: 키 방향
           const kwShape = keywayInputsDiv.querySelector(`.kw-shape[data-kw-idx="${k}"]`)?.value || 'obround';  // v117: 키 형상
 
-          // 양쪽 오프셋이 있고 폭이 없으면 자동 계산
-          if (kwSec && !kwW && !isNaN(kwLeftOff) && !isNaN(kwRightOff)) {
-            const secLen = segmentLengths.find(s => s.position === kwSec);
-            if (secLen && secLen.value) {
-              kwW = secLen.value - kwLeftOff - kwRightOff;
-            }
-          }
+          // v178: keywayWidth는 길이(L) 사용 — 도면에서 키홈의 수평 범위 = L
+          const kwW = kwLen;
 
           if (kwSec && kwW && kwW > 0) {
             hiddenFeatures.push({
               id: `HF_KW${k + 1}`,
               section: kwSec,
               type: 'keyway',
-              keywayWidth: kwW,
-              keywayHeight: kwH || 6,
-              keywayDepth: kwD || 3.5,
+              keywayWidth: kwW,           // 키홈 길이 L (도면에서의 수평 범위)
+              keywayHeight: kwH || 6,     // 키 높이 h (KS 자동)
+              keywayDepth: kwD || 3.5,    // 키홈 깊이 t1 (KS 자동)
+              keywayBreadth: kwB || 0,    // v178: 키 폭 b (KS 자동, 보조투상도용)
               keywayLeftOffset: isNaN(kwLeftOff) ? null : kwLeftOff,
               keywayRightOffset: isNaN(kwRightOff) ? null : kwRightOff,
               keywayDirection: kwDir,  // v116: 'front' 또는 'side'
@@ -2140,10 +2615,11 @@ const ImageAnalyzer = (() => {
                 id: `AUX${k + 1}`,
                 position: auxPositions[k % auxPositions.length],
                 label: '',
-                shape: { type: kwShape || 'obround', width: kwW, height: kwH || 6, confidence: CONF.CONFIRMED },
+                // v178: 보조투상도 shape — 길이(L) × 폭(b)
+                shape: { type: kwShape || 'obround', width: kwW, height: kwB || 6, confidence: CONF.CONFIRMED },
                 dimensions: [
                   { axis: 'horizontal', value: kwW, confidence: CONF.CONFIRMED },
-                  { axis: 'vertical', value: kwH || 6, confidence: CONF.CONFIRMED },
+                  { axis: 'vertical', value: kwB || 6, confidence: CONF.CONFIRMED },
                 ],
                 relatedSection: kwSec,
                 projectionLines: true,
@@ -2247,6 +2723,7 @@ const ImageAnalyzer = (() => {
           const thSec = throughHoleInputsDiv.querySelector(`.th-sec[data-th-idx="${k}"]`)?.value || '';
           const thDiam = parseFloat(throughHoleInputsDiv.querySelector(`.th-diam[data-th-idx="${k}"]`)?.value);
           const thOffset = parseFloat(throughHoleInputsDiv.querySelector(`.th-offset[data-th-idx="${k}"]`)?.value);
+          const thRightOff = parseFloat(throughHoleInputsDiv.querySelector(`.th-right-off[data-th-idx="${k}"]`)?.value);
 
           if (thSec && thDiam > 0) {
             hiddenFeatures.push({
@@ -2255,6 +2732,7 @@ const ImageAnalyzer = (() => {
               type: 'through-hole',
               diameter: thDiam,
               offsetFromLeft: isNaN(thOffset) ? null : thOffset,
+              offsetFromRight: isNaN(thRightOff) ? null : thRightOff,
               confidence: CONF.CONFIRMED,
             });
           }
@@ -2493,11 +2971,15 @@ const ImageAnalyzer = (() => {
     if (tapL) {
       pd.leftTap = `M${tapL.diameter || ''}`;
       pd.leftTapDepth = tapL.depth || '';
+      pd.leftTapType = tapL.threadType || 'coarse';     // v176: 나사 종류
+      pd.leftTapPitch = tapL.pitch || null;               // v176: 피치
       if (tapL.counterBore) pd.leftCB = { diameter: tapL.counterBore.diameter, depth: tapL.counterBore.depth };
     }
     if (tapR) {
       pd.rightTap = `M${tapR.diameter || ''}`;
       pd.rightTapDepth = tapR.depth || '';
+      pd.rightTapType = tapR.threadType || 'coarse';     // v176: 나사 종류
+      pd.rightTapPitch = tapR.pitch || null;               // v176: 피치
       if (tapR.counterBore) pd.rightCB = { diameter: tapR.counterBore.diameter, depth: tapR.counterBore.depth };
     }
 
@@ -2506,9 +2988,10 @@ const ImageAnalyzer = (() => {
     if (kwFeatures.length > 0) {
       pd.keyways = kwFeatures.map(kw => ({
         section: kw.section,
-        width: kw.keywayWidth,
-        height: kw.keywayHeight,
-        depth: kw.keywayDepth,
+        width: kw.keywayWidth,       // 키홈 길이 L (v178)
+        height: kw.keywayHeight,     // 키 높이 h
+        depth: kw.keywayDepth,       // 키홈 깊이 t1
+        breadth: kw.keywayBreadth,   // v178: 키 폭 b
         leftOffset: kw.keywayLeftOffset,
         rightOffset: kw.keywayRightOffset,
         direction: kw.keywayDirection || 'side',  // v116: 키 방향
@@ -2535,6 +3018,7 @@ const ImageAnalyzer = (() => {
         section: th.section,
         diameter: th.diameter,
         offset: th.offsetFromLeft,
+        rightOffset: th.offsetFromRight,
       }));
     }
 
